@@ -310,7 +310,7 @@ const StaffUI: React.FC = () => {
       const { RewardService } = await import('../services/rewardService');
       
       // Process the redemption
-      await RewardService.redeemReward(restaurant.id, redeemFoundCustomer.id, selectedReward.id);
+      await RewardService.redeemReward(restaurant.id, redeemFoundCustomer.id, selectedReward.id, selectedBranch.id);
       
       // Refresh customer data
       const updatedCustomer = await CustomerService.getCustomer(

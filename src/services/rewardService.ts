@@ -173,6 +173,8 @@ export class RewardService {
   }
 
   static async redeemReward(restaurantId: string, customerId: string, rewardId: string): Promise<RewardRedemption> {
+  }
+  static async redeemReward(restaurantId: string, customerId: string, rewardId: string, branchId?: string): Promise<RewardRedemption> {
     if (!restaurantId) {
       throw new Error('Restaurant not found');
     }
@@ -237,7 +239,9 @@ export class RewardService {
       p_type: 'redemption',
       p_points: -reward.points_required,
       p_description: `Redeemed: ${reward.name}`,
-      p_reward_id: rewardId
+      p_amount_spent: 0,
+      p_reward_id: rewardId,
+      p_branch_id: branchId || null
     });
 
     if (transactionError) {
