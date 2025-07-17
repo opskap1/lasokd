@@ -54,15 +54,15 @@ export class LoyaltyAnalyticsService {
         return this.getEmptyMetrics();
       }
 
-      // Get restaurant settings for point value calculation
+      // Get restaurant settings for proper point value calculation
       const { data: restaurant } = await supabase
         .from('restaurants')
         .select('settings')
         .eq('id', restaurantId)
         .single();
 
-      const pointsPerDollar = restaurant?.settings?.points_per_dollar || 1;
-      const pointValueAED = 1 / pointsPerDollar; // Each point is worth this much in AED
+      // Use the actual point value from loyalty config
+      const pointValueAED = restaurant?.settings?.pointValueAED || 0.05;
 
       // Get all customers and their transaction data
       const { data: customers } = await supabase
@@ -106,6 +106,7 @@ export class LoyaltyAnalyticsService {
 
       const grossRevenue = customers?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
       
+      // Calculate reward cost using the correct point value
       const rewardCost = totalPointsRedeemed * pointValueAED;
       
       const netRevenue = grossRevenue - rewardCost;
@@ -128,7 +129,7 @@ export class LoyaltyAnalyticsService {
       // Generate ROI summary text
       const roiMultiplier = rewardCost > 0 ? (netProfit / rewardCost) : 0;
       const roiSummaryText = rewardCost > 0 
-        ? `For every 1 AED you give in loyalty points, you earn ${roiMultiplier.toFixed(2)} AED in return.`
+        ? `For every ${pointValueAED.toFixed(3)} AED you give in loyalty points, you earn ${roiMultiplier.toFixed(2)} AED in return.`
         : 'No loyalty rewards have been redeemed yet.';
 
       // Calculate total reward liability (unused points)
@@ -197,6 +198,9 @@ export class LoyaltyAnalyticsService {
       const pointValueAED = 1 / pointsPerDollar;
       const cogsPercentage = restaurant?.settings?.cogs_percentage || 0.3;
 
+      // Use the actual point value from loyalty config
+      const actualPointValueAED = restaurant?.settings?.pointValueAED || 0.05;
+
       // Generate monthly breakdown
       const months = [];
       const current = new Date(dateRange.start);
@@ -232,7 +236,7 @@ export class LoyaltyAnalyticsService {
           .lte('created_at', month.end.toISOString());
 
         const grossRevenue = customers?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
-        const rewardCost = transactions?.reduce((sum, t) => sum + Math.abs(t.points), 0) * pointValueAED || 0;
+        const rewardCost = transactions?.reduce((sum, t) => sum + Math.abs(t.points), 0) * actualPointValueAED || 0;
         const netRevenue = grossRevenue - rewardCost;
         const cogs = grossRevenue * cogsPercentage;
         const netProfit = netRevenue - cogs;

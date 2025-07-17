@@ -97,25 +97,8 @@ export class CustomerService {
       throw new Error(error.message);
     }
 
-    // Give signup bonus
-    const { data: restaurant } = await supabase
-      .from('restaurants')
-      .select('settings')
-      .eq('id', restaurantId)
-      .single();
-
-    const signupBonus = restaurant?.settings?.signup_bonus || 100;
-
-    await supabase.rpc('process_point_transaction', {
-      p_restaurant_id: restaurantId,
-      p_customer_id: data.id,
-      p_type: 'signup',
-      p_points: signupBonus,
-      p_description: 'Welcome bonus for joining our loyalty program'
-    });
-
-    // Fetch updated customer data
-    return this.getCustomer(restaurantId, data.id) || data;
+    // Return customer data without signup bonus
+    return data;
   }
 
   static async updateCustomer(restaurantId: string, customerId: string, updates: CustomerUpdate): Promise<Customer | null> {

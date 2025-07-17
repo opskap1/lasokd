@@ -193,12 +193,6 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, restaurantI
                 </div>
               </div>
 
-              <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-xl p-4">
-                <div className="flex items-center gap-3 justify-center">
-                  <Zap className="h-5 w-5 text-yellow-600" />
-                  <p className="font-medium text-yellow-900">Get 100 bonus points just for joining!</p>
-                </div>
-              </div>
             </div>
           )}
 
@@ -410,8 +404,8 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete, restaurantI
                       <Sparkles className="h-5 w-5 text-green-600" />
                     </div>
                     <div>
-                      <p className="font-medium text-green-900">Welcome Bonus!</p>
-                      <p className="text-sm text-green-700">You'll receive 100 points for joining</p>
+                      <p className="font-medium text-green-900">Welcome!</p>
+                      <p className="text-sm text-green-700">Start earning points with your first purchase</p>
                     </div>
                   </div>
                 </div>

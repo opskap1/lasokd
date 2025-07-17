@@ -288,13 +288,6 @@ const CustomerOnboarding: React.FC<CustomerOnboardingProps> = ({ restaurant, onC
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-xl p-4">
-                  <div className="flex items-center gap-3 justify-center">
-                    <Zap className="w-5 h-5 text-yellow-600" />
-                    <p className="font-medium text-yellow-900">Get 100 bonus points for joining!</p>
-                  </div>
-                </div>
-
                 <button
                   onClick={() => setStep(1)}
                   className="w-full bg-gradient-to-r from-[#1E2A78] to-[#3B4B9A] text-white font-medium py-4 px-6 rounded-xl hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
