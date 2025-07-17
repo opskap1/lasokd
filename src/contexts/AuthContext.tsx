@@ -180,8 +180,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             slug: slug,
             settings: {
               points_per_dollar: 1,
-              signup_bonus: 100,
               referral_bonus: 50,
+              pointValueAED: 0.05,
+              blanketMode: {
+                enabled: true,
+                type: 'manual',
+                manualSettings: {
+                  pointsPerAED: 0.1
+                }
+              },
               tier_thresholds: {
                 silver: 500,
                 gold: 1000
