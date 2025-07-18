@@ -335,7 +335,7 @@ export class LoyaltyAnalyticsService {
         pointRedemptionRate: 0,
         rewardCostPercentage: 0,
         estimatedGrossProfit: 0,
-        profitMargin: 0
+        profitMargin: 0,
       loyaltyCustomers: 0
     };
   }
