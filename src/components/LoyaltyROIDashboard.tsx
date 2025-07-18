@@ -3,14 +3,14 @@ import {
   TrendingUp, TrendingDown, DollarSign, Users, Gift, Target,
   ChevronDown, ChevronUp, Info, AlertCircle, CheckCircle,
   BarChart3, PieChart, LineChart, Repeat, ShoppingCart,
-  Crown, Award, Sparkles, RefreshCw
+  Crown, Award, Sparkles, RefreshCw, Settings, Calculator
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart as RechartsPieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart as RechartsLineChart, Line, ComposedChart, Legend
 } from 'recharts';
-import { LoyaltyAnalyticsService, LoyaltyROIMetrics, RevenueBreakdown, CustomerBehaviorMetrics } from '../services/loyaltyAnalyticsService';
+import { LoyaltyAnalyticsService, LoyaltyROIMetrics, RevenueBreakdown, CustomerBehaviorMetrics, ROISettings } from '../services/loyaltyAnalyticsService';
 import { useAuth } from '../contexts/AuthContext';
 
 interface LoyaltyROIDashboardProps {
@@ -21,9 +21,12 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
   const [metrics, setMetrics] = useState<LoyaltyROIMetrics | null>(null);
   const [revenueBreakdown, setRevenueBreakdown] = useState<RevenueBreakdown[]>([]);
   const [behaviorMetrics, setBehaviorMetrics] = useState<CustomerBehaviorMetrics | null>(null);
+  const [roiSettings, setROISettings] = useState<ROISettings | null>(null);
+  const [showROISettings, setShowROISettings] = useState(false);
   const [showMoreInsights, setShowMoreInsights] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
   
   const { restaurant } = useAuth();
 
@@ -51,18 +54,35 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
       const [metricsData, revenueData, behaviorData] = await Promise.all([
         LoyaltyAnalyticsService.getLoyaltyROIMetrics(restaurant.id, dateRange),
         LoyaltyAnalyticsService.getRevenueBreakdown(restaurant.id, dateRange),
-        LoyaltyAnalyticsService.getCustomerBehaviorMetrics(restaurant.id, dateRange)
+        LoyaltyAnalyticsService.getCustomerBehaviorMetrics(restaurant.id, dateRange),
+        LoyaltyAnalyticsService.getROISettings(restaurant.id)
       ]);
 
       setMetrics(metricsData);
       setRevenueBreakdown(revenueData);
       setBehaviorMetrics(behaviorData);
+      setROISettings(roiSettings);
 
     } catch (err: any) {
       console.error('Error fetching loyalty metrics:', err);
       setError(err.message || 'Failed to load loyalty metrics');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveROISettings = async () => {
+    if (!restaurant || !roiSettings) return;
+
+    try {
+      setSavingSettings(true);
+      await LoyaltyAnalyticsService.updateROISettings(restaurant.id, roiSettings);
+      await fetchLoyaltyMetrics(); // Refresh metrics with new settings
+    } catch (error) {
+      console.error('Error saving ROI settings:', error);
+    } finally {
+      setSavingSettings(false);
+      setShowROISettings(false);
     }
   };
 
@@ -177,6 +197,12 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
         >
           <RefreshCw className="h-5 w-5" />
         </button>
+        <button
+          onClick={() => setShowROISettings(true)}
+          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          <RefreshCw className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Primary ROI Card */}
@@ -230,6 +256,24 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
 
         <div className="bg-white rounded-2xl p-6 border border-gray-200">
           <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+              <Calculator className="h-6 w-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Estimated Gross Profit</p>
+              <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.estimatedGrossProfit)}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-gray-500">Profit Margin:</p>
+            <span className="text-xs font-medium text-blue-600">
+              {metrics.profitMargin.toFixed(1)}%
+            </span>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-6 border border-gray-200">
+          <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center">
               <Gift className="h-6 w-6 text-red-600" />
             </div>
@@ -238,7 +282,12 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
               <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.rewardCost)}</p>
             </div>
           </div>
-          <p className="text-xs text-gray-500">Value of points redeemed</p>
+          <div className="space-y-1">
+            <p className="text-xs text-gray-500">{metrics.totalPointsRedeemed.toLocaleString()} points redeemed</p>
+            <p className="text-xs text-gray-500">
+              {metrics.rewardCostPercentage.toFixed(1)}% of revenue
+            </p>
+          </div>
         </div>
 
         <div className="bg-white rounded-2xl p-6 border border-gray-200">
@@ -374,6 +423,18 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
           <p className="text-xs text-gray-500">Value of unused points</p>
         </div>
       </div>
+        <div className="bg-white rounded-2xl p-6 border border-gray-200">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+              <Repeat className="h-6 w-6 text-gray-600" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-600">Point Redemption Rate</p>
+              <p className="text-2xl font-bold text-gray-900">{metrics.pointRedemptionRate.toFixed(1)}%</p>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">Points redeemed vs issued</p>
+        </div>
 
       {/* More Insights Toggle */}
       <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
@@ -481,6 +542,119 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
           </div>
         )}
       </div>
+
+      {/* ROI Settings Modal */}
+      {showROISettings && roiSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-gray-900">ROI Calculation Settings</h3>
+              <button
+                onClick={() => setShowROISettings(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Info className="h-4 w-4 text-blue-600" />
+                  <span className="text-sm font-medium text-blue-900">About ROI Calculations</span>
+                </div>
+                <p className="text-xs text-blue-700">
+                  These settings help estimate profitability when exact cost data isn't available. 
+                  Adjust based on your restaurant's actual margins.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Default Profit Margin (%)
+                </label>
+                <input
+                  type="number"
+                  value={(roiSettings.default_profit_margin * 100).toFixed(0)}
+                  onChange={(e) => setROISettings({
+                    ...roiSettings,
+                    default_profit_margin: parseFloat(e.target.value) / 100 || 0.3
+                  })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
+                  min="10"
+                  max="80"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Used when menu item cost prices aren't available
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Estimated COGS (%)
+                </label>
+                <input
+                  type="number"
+                  value={(roiSettings.estimated_cogs_percentage * 100).toFixed(0)}
+                  onChange={(e) => setROISettings({
+                    ...roiSettings,
+                    estimated_cogs_percentage: parseFloat(e.target.value) / 100 || 0.4
+                  })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
+                  min="20"
+                  max="70"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Cost of goods sold as percentage of revenue
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Target ROI (%)
+                </label>
+                <input
+                  type="number"
+                  value={roiSettings.target_roi_percentage.toFixed(0)}
+                  onChange={(e) => setROISettings({
+                    ...roiSettings,
+                    target_roi_percentage: parseFloat(e.target.value) || 200
+                  })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
+                  min="50"
+                  max="500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Your target return on loyalty investment
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowROISettings(false)}
+                className="flex-1 py-3 px-4 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveROISettings}
+                disabled={savingSettings}
+                className="flex-1 py-3 px-4 bg-gradient-to-r from-[#1E2A78] to-[#3B4B9A] text-white rounded-xl hover:shadow-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {savingSettings ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <Settings className="h-4 w-4" />
+                    Save Settings
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

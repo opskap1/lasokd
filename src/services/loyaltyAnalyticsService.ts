@@ -1,5 +1,13 @@
 import { supabase } from '../lib/supabase';
 
+export interface ROISettings {
+  default_profit_margin: number;
+  estimated_cogs_percentage: number;
+  labor_cost_percentage: number;
+  overhead_percentage: number;
+  target_roi_percentage: number;
+}
+
 export interface LoyaltyROIMetrics {
   // Primary KPI
   roi: number;
@@ -26,6 +34,12 @@ export interface LoyaltyROIMetrics {
   totalPointsRedeemed: number;
   activeCustomers: number;
   loyaltyCustomers: number;
+  
+  // Enhanced metrics
+  pointRedemptionRate: number;
+  rewardCostPercentage: number;
+  estimatedGrossProfit: number;
+  profitMargin: number;
 }
 
 export interface RevenueBreakdown {
@@ -45,6 +59,49 @@ export interface CustomerBehaviorMetrics {
 }
 
 export class LoyaltyAnalyticsService {
+  static async getROISettings(restaurantId: string): Promise<ROISettings> {
+    try {
+      const { data, error } = await supabase
+        .from('restaurants')
+        .select('roi_settings')
+        .eq('id', restaurantId)
+        .single();
+
+      if (error) throw error;
+
+      return data?.roi_settings || {
+        default_profit_margin: 0.3,
+        estimated_cogs_percentage: 0.4,
+        labor_cost_percentage: 0.25,
+        overhead_percentage: 0.15,
+        target_roi_percentage: 200
+      };
+    } catch (error) {
+      console.error('Error fetching ROI settings:', error);
+      return {
+        default_profit_margin: 0.3,
+        estimated_cogs_percentage: 0.4,
+        labor_cost_percentage: 0.25,
+        overhead_percentage: 0.15,
+        target_roi_percentage: 200
+      };
+    }
+  }
+
+  static async updateROISettings(restaurantId: string, settings: ROISettings): Promise<void> {
+    try {
+      const { error } = await supabase.rpc('update_restaurant_roi_settings', {
+        p_restaurant_id: restaurantId,
+        p_roi_settings: settings
+      });
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error updating ROI settings:', error);
+      throw error;
+    }
+  }
+
   static async getLoyaltyROIMetrics(
     restaurantId: string, 
     dateRange: { start: Date; end: Date }
@@ -54,125 +111,67 @@ export class LoyaltyAnalyticsService {
         return this.getEmptyMetrics();
       }
 
-      // Get restaurant settings for proper point value calculation
-      const { data: restaurant } = await supabase
-        .from('restaurants')
-        .select('settings')
-        .eq('id', restaurantId)
-        .single();
+      // Use the comprehensive ROI calculation function
+      const { data: roiData, error } = await supabase.rpc('calculate_comprehensive_roi', {
+        p_restaurant_id: restaurantId,
+        p_start_date: dateRange.start.toISOString(),
+        p_end_date: dateRange.end.toISOString()
+      });
 
-      // Use the actual point value from loyalty config
-      const pointValueAED = restaurant?.settings?.pointValueAED || 0.05;
+      if (error) throw error;
 
-      // Get all customers and their transaction data
-      const { data: customers } = await supabase
-        .from('customers')
-        .select(`
-          id,
-          total_points,
-          lifetime_points,
-          total_spent,
-          visit_count,
-          created_at
-        `)
-        .eq('restaurant_id', restaurantId)
-        .gte('created_at', dateRange.start.toISOString())
-        .lte('created_at', dateRange.end.toISOString());
+      if (!roiData) {
+        return this.getEmptyMetrics();
+      }
 
-      // Get all transactions
-      const { data: transactions } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('restaurant_id', restaurantId)
-        .gte('created_at', dateRange.start.toISOString())
-        .lte('created_at', dateRange.end.toISOString());
+      // Extract data from the comprehensive calculation
+      const revenue = roiData.revenue_metrics;
+      const costs = roiData.cost_metrics;
+      const loyalty = roiData.loyalty_metrics;
+      const customers = roiData.customer_metrics;
+      const profitability = roiData.profitability;
+      const settings = roiData.settings_used;
 
-      // Get all reward redemptions
-      const { data: redemptions } = await supabase
-        .from('reward_redemptions')
-        .select('points_used')
-        .eq('restaurant_id', restaurantId)
-        .gte('redeemed_at', dateRange.start.toISOString())
-        .lte('redeemed_at', dateRange.end.toISOString());
-
-      // Calculate metrics
-      const totalPointsIssued = transactions
-        ?.filter(t => t.points > 0)
-        .reduce((sum, t) => sum + t.points, 0) || 0;
-
-      const totalPointsRedeemed = transactions
-        ?.filter(t => t.points < 0)
-        .reduce((sum, t) => sum + Math.abs(t.points), 0) || 0;
-
-      const grossRevenue = customers?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
-      
-      // Calculate reward cost using the correct point value
-      const rewardCost = totalPointsRedeemed * pointValueAED;
-      
-      const netRevenue = grossRevenue - rewardCost;
-      
-      // Estimate COGS as 30% of gross revenue (configurable)
-      const cogsPercentage = restaurant?.settings?.cogs_percentage || 0.3;
-      const cogs = grossRevenue * cogsPercentage;
-      
-      const netProfit = netRevenue - cogs;
-      
-      // Calculate ROI
-      const roi = rewardCost > 0 ? (netProfit / rewardCost) * 100 : 0;
-      
-      // Determine ROI status
+      // Map to our interface
+      const roi = profitability.roi_percentage;
       let roiStatus: 'high-performing' | 'profitable' | 'losing-money';
-      if (roi > 100) roiStatus = 'high-performing';
+      
+      if (roi >= 200) roiStatus = 'high-performing';
       else if (roi >= 0) roiStatus = 'profitable';
       else roiStatus = 'losing-money';
-      
-      // Generate ROI summary text
-      const roiMultiplier = rewardCost > 0 ? (netProfit / rewardCost) : 0;
-      const roiSummaryText = rewardCost > 0 
-        ? `For every ${pointValueAED.toFixed(3)} AED you give in loyalty points, you earn ${roiMultiplier.toFixed(2)} AED in return.`
-        : 'No loyalty rewards have been redeemed yet.';
 
-      // Calculate total reward liability (unused points)
-      const totalRewardLiability = customers?.reduce((sum, c) => sum + c.total_points, 0) * pointValueAED || 0;
+      const roiSummaryText = costs.total_reward_cost > 0 
+        ? `For every ${settings.point_value_aed} AED you invest in loyalty rewards, you generate ${(profitability.net_profit_after_rewards / costs.total_reward_cost).toFixed(2)} AED in net profit.`
+        : 'No loyalty rewards have been redeemed yet. Start rewarding customers to see ROI analysis.';
 
-      // Calculate behavioral metrics
-      const activeCustomers = customers?.length || 0;
-      const loyaltyCustomers = customers?.filter(c => c.visit_count > 1).length || 0;
-      const repeatPurchaseRate = activeCustomers > 0 ? (loyaltyCustomers / activeCustomers) * 100 : 0;
-      
-      const totalOrders = customers?.reduce((sum, c) => sum + c.visit_count, 0) || 0;
-      const averageOrderValue = totalOrders > 0 ? grossRevenue / totalOrders : 0;
-      
-      const loyaltyOrderValue = loyaltyCustomers > 0 
-        ? customers?.filter(c => c.visit_count > 1).reduce((sum, c) => sum + c.total_spent, 0) / loyaltyCustomers 
-        : 0;
-      
+      // Calculate additional behavioral metrics
       const monthsInRange = Math.max(1, Math.ceil((dateRange.end.getTime() - dateRange.start.getTime()) / (1000 * 60 * 60 * 24 * 30)));
-      const purchaseFrequency = activeCustomers > 0 ? totalOrders / activeCustomers / monthsInRange : 0;
-      
-      // Estimate customer lifetime as 12 months (configurable)
-      const customerLifetimeMonths = restaurant?.settings?.customer_lifetime_months || 12;
-      const customerLifetimeValue = averageOrderValue * purchaseFrequency * customerLifetimeMonths;
+      const purchaseFrequency = customers.total_customers > 0 ? revenue.total_orders / customers.total_customers / monthsInRange : 0;
+      const customerLifetimeValue = revenue.average_order_value * purchaseFrequency * 12; // 12 months estimated lifetime
 
       return {
         roi,
         roiStatus,
         roiSummaryText,
-        grossRevenue,
-        rewardCost,
-        netRevenue,
-        cogs,
-        netProfit,
-        totalRewardLiability,
-        repeatPurchaseRate,
-        averageOrderValue,
-        loyaltyAOV: loyaltyOrderValue,
+        grossRevenue: revenue.total_revenue,
+        rewardCost: costs.total_reward_cost,
+        netRevenue: revenue.total_revenue - costs.total_reward_cost,
+        cogs: costs.estimated_cogs,
+        netProfit: profitability.net_profit_after_rewards,
+        totalRewardLiability: loyalty.outstanding_liability,
+        repeatPurchaseRate: customers.retention_rate,
+        averageOrderValue: revenue.average_order_value,
+        loyaltyAOV: revenue.revenue_per_customer,
         purchaseFrequency,
         customerLifetimeValue,
-        totalPointsIssued,
-        totalPointsRedeemed,
-        activeCustomers,
-        loyaltyCustomers
+        totalPointsIssued: loyalty.total_points_issued,
+        totalPointsRedeemed: loyalty.total_points_redeemed,
+        activeCustomers: customers.total_customers,
+        loyaltyCustomers: customers.returning_customers,
+        pointRedemptionRate: loyalty.point_redemption_rate,
+        rewardCostPercentage: costs.reward_cost_percentage,
+        estimatedGrossProfit: costs.estimated_gross_profit,
+        profitMargin: profitability.gross_profit_margin
       };
 
     } catch (error) {
@@ -332,7 +331,11 @@ export class LoyaltyAnalyticsService {
       customerLifetimeValue: 0,
       totalPointsIssued: 0,
       totalPointsRedeemed: 0,
-      activeCustomers: 0,
+        loyaltyCustomers: 0,
+        pointRedemptionRate: 0,
+        rewardCostPercentage: 0,
+        estimatedGrossProfit: 0,
+        profitMargin: 0
       loyaltyCustomers: 0
     };
   }
