@@ -189,20 +189,31 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Loyalty Program ROI</h2>
-          <p className="text-gray-600">Financial impact and return on investment analysis</p>
+          <p className="text-gray-600">
+            Financial impact and return on investment analysis
+            {restaurant?.settings?.loyaltyMode && (
+              <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                {restaurant.settings.loyaltyMode === 'blanket' ? 'Blanket Mode' : 'Menu-Based Mode'}
+              </span>
+            )}
+          </p>
         </div>
-        <button
-          onClick={fetchLoyaltyMetrics}
-          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-          <RefreshCw className="h-5 w-5" />
-        </button>
-        <button
-          onClick={() => setShowROISettings(true)}
-          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-        >
-          <RefreshCw className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchLoyaltyMetrics}
+            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Refresh Data"
+          >
+            <RefreshCw className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => setShowROISettings(true)}
+            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            title="ROI Settings"
+          >
+            <Settings className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       {/* Primary ROI Card */}
@@ -234,6 +245,12 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
           <div className="bg-white/10 rounded-xl p-4">
             <p className="text-white/90 text-sm leading-relaxed">
               {metrics.roiSummaryText}
+              {restaurant?.settings && (
+                <span className="block mt-2 text-white/70 text-xs">
+                  Point System: 1 point = {restaurant.settings.pointValueAED || 0.05} AED • 
+                  Earning Rate: {restaurant.settings.pointsPerAED || 0.1} points per AED
+                </span>
+              )}
             </p>
           </div>
         </div>
@@ -538,6 +555,24 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
                   <p className="text-sm text-gray-600">Avg Points Redeemed</p>
                 </div>
               </div>
+              
+              {/* Point System Information */}
+              {restaurant?.settings && (
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                  <h5 className="text-sm font-medium text-blue-900 mb-2">Current Point System Configuration</h5>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-blue-700">
+                    <div>
+                      <span className="font-medium">Mode:</span> {restaurant.settings.loyaltyMode === 'blanket' ? 'Blanket' : 'Menu-Based'}
+                    </div>
+                    <div>
+                      <span className="font-medium">Point Value:</span> 1 point = {restaurant.settings.pointValueAED || 0.05} AED
+                    </div>
+                    <div>
+                      <span className="font-medium">Earning Rate:</span> {restaurant.settings.pointsPerAED || 0.1} points per AED
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -565,7 +600,7 @@ const LoyaltyROIDashboard: React.FC<LoyaltyROIDashboardProps> = ({ timeRange }) 
                 </div>
                 <p className="text-xs text-blue-700">
                   These settings help estimate profitability when exact cost data isn't available. 
-                  Adjust based on your restaurant's actual margins.
+                  Adjust based on your restaurant's actual margins. Current point system: 1 point = {restaurant?.settings?.pointValueAED || 0.05} AED
                 </p>
               </div>
 

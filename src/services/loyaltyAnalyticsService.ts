@@ -187,18 +187,19 @@ export class LoyaltyAnalyticsService {
     try {
       if (!restaurantId) return [];
 
-      const { data: restaurant } = await supabase
+      // Get restaurant settings to determine point value and loyalty mode
+      const { data: restaurant, error: restaurantError } = await supabase
         .from('restaurants')
-        .select('settings')
+        .select('settings, roi_settings')
         .eq('id', restaurantId)
         .single();
 
-      const pointsPerDollar = restaurant?.settings?.points_per_dollar || 1;
-      const pointValueAED = 1 / pointsPerDollar;
-      const cogsPercentage = restaurant?.settings?.cogs_percentage || 0.3;
+      if (restaurantError) throw restaurantError;
 
-      // Use the actual point value from loyalty config
-      const actualPointValueAED = restaurant?.settings?.pointValueAED || 0.05;
+      // Extract settings with proper defaults
+      const pointValueAED = restaurant?.settings?.pointValueAED || 0.05;
+      const loyaltyMode = restaurant?.settings?.loyaltyMode || 'blanket';
+      const cogsPercentage = restaurant?.roi_settings?.estimated_cogs_percentage || 0.4;
 
       // Generate monthly breakdown
       const months = [];
@@ -219,14 +220,21 @@ export class LoyaltyAnalyticsService {
       const breakdown: RevenueBreakdown[] = [];
 
       for (const month of months) {
-        const { data: customers } = await supabase
+        // Get customer spending for the month
+        const { data: customers, error: customersError } = await supabase
           .from('customers')
           .select('total_spent')
           .eq('restaurant_id', restaurantId)
           .gte('created_at', month.start.toISOString())
           .lte('created_at', month.end.toISOString());
 
-        const { data: transactions } = await supabase
+        if (customersError) {
+          console.error('Error fetching customers for month:', customersError);
+          continue;
+        }
+
+        // Get redemption transactions for the month
+        const { data: transactions, error: transactionsError } = await supabase
           .from('transactions')
           .select('points')
           .eq('restaurant_id', restaurantId)
@@ -234,8 +242,14 @@ export class LoyaltyAnalyticsService {
           .gte('created_at', month.start.toISOString())
           .lte('created_at', month.end.toISOString());
 
+        if (transactionsError) {
+          console.error('Error fetching transactions for month:', transactionsError);
+          continue;
+        }
+
         const grossRevenue = customers?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
-        const rewardCost = transactions?.reduce((sum, t) => sum + Math.abs(t.points), 0) * actualPointValueAED || 0;
+        const totalPointsRedeemed = transactions?.reduce((sum, t) => sum + Math.abs(t.points), 0) || 0;
+        const rewardCost = totalPointsRedeemed * pointValueAED;
         const netRevenue = grossRevenue - rewardCost;
         const cogs = grossRevenue * cogsPercentage;
         const netProfit = netRevenue - cogs;
@@ -331,12 +345,12 @@ export class LoyaltyAnalyticsService {
       customerLifetimeValue: 0,
       totalPointsIssued: 0,
       totalPointsRedeemed: 0,
-        loyaltyCustomers: 0,
-        pointRedemptionRate: 0,
-        rewardCostPercentage: 0,
-        estimatedGrossProfit: 0,
-        profitMargin: 0,
-      loyaltyCustomers: 0
+      activeCustomers: 0,
+      loyaltyCustomers: 0,
+      pointRedemptionRate: 0,
+      rewardCostPercentage: 0,
+      estimatedGrossProfit: 0,
+      profitMargin: 0
     };
   }
 }
