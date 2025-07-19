@@ -1184,3 +1184,5 @@ const SuperAdminUI: React.FC = () => {
 };
 
 export default SuperAdminUI;
+
+export default SuperAdminUI
