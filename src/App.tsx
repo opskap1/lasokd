@@ -11,6 +11,7 @@ import MenuItemsPage from './components/MenuItemsPage';
 import LoyaltyConfigPage from './components/LoyaltyConfigPage';
 import BranchManagement from './components/BranchManagement';
 import StaffUI from './components/StaffUI';
+import SuperAdminUI from './components/SuperAdminUI';
 
 
 
@@ -70,6 +71,11 @@ function App() {
           <Route 
             path="/staff" 
             element={<StaffUI />}
+          />
+          
+          <Route 
+            path="/super-admin" 
+            element={<SuperAdminUI />}
           />
           
           <Route 
