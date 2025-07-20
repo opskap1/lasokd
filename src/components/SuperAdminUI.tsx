@@ -171,10 +171,10 @@ const SuperAdminUI: React.FC = () => {
   //     );
 
   //     return restaurantsWithOwners;
-    } catch (error) {
-      console.error('Error fetching restaurants:', error);
-    }
-  };
+  //   } catch (error) { 
+  //     console.error('Error fetching restaurants:', error);
+  //   }
+  // };
 
   const fetchCustomers = async () => {
     try {
