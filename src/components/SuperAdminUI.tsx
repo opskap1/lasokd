@@ -87,7 +87,8 @@ const SuperAdminUI: React.FC = () => {
       await Promise.all([
         fetchRestaurants(),
         fetchCustomers(),
-        fetchTransactions(),
+        transactionsData,
+        supportTicketsData
         fetchSystemStats()
       ]);
     } catch (error) {
@@ -220,7 +221,8 @@ const SuperAdminUI: React.FC = () => {
       ] = await Promise.all([
         supabase.from('restaurants').select('*', { count: 'exact', head: true }),
         supabase.from('customers').select('*', { count: 'exact', head: true }),
-        supabase.from('transactions').select('*', { count: 'exact', head: true }),
+        fetchTransactions(),
+        fetchSupportTickets()
         supabase.from('transactions').select('points').gt('points', 0),
         supabase.from('customers').select('total_spent')
       ]);
@@ -228,6 +230,7 @@ const SuperAdminUI: React.FC = () => {
       const totalPointsIssued = pointsData.data?.reduce((sum, t) => sum + t.points, 0) || 0;
       const totalRevenueTracked = revenueData.data?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
       const activeRestaurants = restaurants.filter(r => 
+      setSupportTickets(supportTicketsData);
         r.customer_count && r.customer_count > 0
       ).length;
 
