@@ -97,37 +97,55 @@ const SuperAdminUI: React.FC = () => {
     }
   };
 
-  const fetchRestaurants = async () => {
-    try {
-      // Get restaurants with owner info and stats
-      const { data: restaurantData, error } = await supabase
-        .from('restaurants')
-        .select(`
-      const { data: restaurants, error } = await supabase
-        .from('restaurants')
-        .select('*')
-        .order('created_at', { ascending: false });
+ const fetchRestaurants = async () => {
+  try {
+    const { data: restaurantData, error } = await supabase
+      .from('restaurants')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-      if (error) throw error;
+    if (error) throw error;
 
-      // Get customer counts and revenue for each restaurant
-      const restaurantsWithStats = await Promise.all(
-        (restaurantData || []).map(async (restaurant) => {
-          const [customerCount, revenue, pointsIssued] = await Promise.all([
-            getCustomerCount(restaurant.id),
-            getTotalRevenue(restaurant.id),
-            getTotalPointsIssued(restaurant.id)
-          ]);
+    const restaurantsWithStats = await Promise.all(
+      (restaurantData || []).map(async (restaurant) => {
+        const [customerCount, revenue, pointsIssued] = await Promise.all([
+          getCustomerCount(restaurant.id),
+          getTotalRevenue(restaurant.id),
+          getTotalPointsIssued(restaurant.id)
+        ]);
+
+        try {
+          const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
+
+          const first = userData.user?.user_metadata?.first_name;
+          const last = userData.user?.user_metadata?.last_name;
 
           return {
             ...restaurant,
-            owner_email: restaurant.users?.email,
+            owner_email: userData.user?.email || 'Unknown',
+            owner_name: (first && last) ? `${first} ${last}` : 'Unknown',
             customer_count: customerCount,
             total_revenue: revenue,
             total_points_issued: pointsIssued
           };
-        })
-      );
+        } catch {
+          return {
+            ...restaurant,
+            owner_email: 'Unknown',
+            owner_name: 'Unknown',
+            customer_count: customerCount,
+            total_revenue: revenue,
+            total_points_issued: pointsIssued
+          };
+        }
+      })
+    );
+
+    setRestaurants(restaurantsWithStats);
+  } catch (error) {
+    console.error('Error fetching restaurants:', error);
+  }
+};
 
       // Fetch owner emails separately
       const restaurantsWithOwners = await Promise.all(
