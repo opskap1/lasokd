@@ -147,30 +147,30 @@ const SuperAdminUI: React.FC = () => {
   }
 };
 
-      // Fetch owner emails separately
-      const restaurantsWithOwners = await Promise.all(
-        (restaurants || []).map(async (restaurant) => {
-          try {
-            const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
-            return {
-              ...restaurant,
-              owner_email: userData.user?.email || 'Unknown',
-              owner_name: (userData.user?.user_metadata?.first_name && userData.user?.user_metadata?.last_name)
-  ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
-  : 'Unknown'
+  //     // Fetch owner emails separately
+  //     const restaurantsWithOwners = await Promise.all(
+  //       (restaurants || []).map(async (restaurant) => {
+  //         try {
+  //           const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
+  //           return {
+  //             ...restaurant,
+  //             owner_email: userData.user?.email || 'Unknown',
+  //             owner_name: (userData.user?.user_metadata?.first_name && userData.user?.user_metadata?.last_name)
+  // ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
+  // : 'Unknown'
 
-            };
-          } catch (err) {
-            return {
-              ...restaurant,
-              owner_email: 'Unknown',
-              owner_name: 'Unknown'
-            };
-          }
-        })
-      );
+  //           };
+  //         } catch (err) {
+  //           return {
+  //             ...restaurant, 
+  //             owner_email: 'Unknown',
+  //             owner_name: 'Unknown'
+  //           };
+  //         }
+  //       })
+  //     );
 
-      return restaurantsWithOwners;
+  //     return restaurantsWithOwners;
     } catch (error) {
       console.error('Error fetching restaurants:', error);
     }
