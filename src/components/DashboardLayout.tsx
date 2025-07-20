@@ -56,6 +56,7 @@ const DashboardLayout: React.FC = () => {
     { name: 'Menu Items', href: '/dashboard/menu-items', icon: Utensils },
     { name: 'Loyalty Config', href: '/dashboard/loyalty-config', icon: SettingsIcon },
     { name: 'Branches', href: '/dashboard/branches', icon: Building },
+    { name: 'Support', href: '/dashboard/support', icon: MessageSquare },
     { name: 'QR Codes', href: '/dashboard/qr', icon: QrCode },
     { name: 'Analytics', href: '/dashboard/analytics', icon: LineChart },
     { name: 'Billing', href: '/dashboard/billing', icon: CreditCard },

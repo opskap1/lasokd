@@ -103,9 +103,9 @@ const SuperAdminUI: React.FC = () => {
       const { data: restaurantData, error } = await supabase
         .from('restaurants')
         .select(`
-          *,
-          users!restaurants_owner_id_fkey(email)
-        `)
+      const { data: restaurants, error } = await supabase
+        .from('restaurants')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -129,7 +129,29 @@ const SuperAdminUI: React.FC = () => {
         })
       );
 
-      setRestaurants(restaurantsWithStats);
+      // Fetch owner emails separately
+      const restaurantsWithOwners = await Promise.all(
+        (restaurants || []).map(async (restaurant) => {
+          try {
+            const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
+            return {
+              ...restaurant,
+              owner_email: userData.user?.email || 'Unknown',
+              owner_name: userData.user?.user_metadata?.first_name && userData.user?.user_metadata?.last_name
+                ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
+                : 'Unknown'
+            };
+          } catch (err) {
+            return {
+              ...restaurant,
+              owner_email: 'Unknown',
+              owner_name: 'Unknown'
+            };
+          }
+        })
+      );
+
+      return restaurantsWithOwners;
     } catch (error) {
       console.error('Error fetching restaurants:', error);
     }
@@ -324,8 +346,18 @@ const SuperAdminUI: React.FC = () => {
 
   const resetRestaurantData = async (restaurantId: string) => {
     try {
-      // Delete all customer data for this restaurant
-      await supabase
+      // Use a more comprehensive reset approach
+      const { error: transactionError } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('restaurant_id', restaurantId);
+
+      const { error: redemptionError } = await supabase
+        .from('reward_redemptions')
+        .delete()
+        .eq('restaurant_id', restaurantId);
+
+      const { error: customerError } = await supabase
         .from('customers')
         .delete()
         .eq('restaurant_id', restaurantId);
@@ -339,7 +371,9 @@ const SuperAdminUI: React.FC = () => {
       // Delete all redemptions
       await supabase
         .from('reward_redemptions')
-        .delete()
+      if (transactionError || redemptionError || customerError) {
+        throw new Error('Failed to reset restaurant data');
+      }
         .eq('restaurant_id', restaurantId);
 
       await fetchAllData();
