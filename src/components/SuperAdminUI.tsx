@@ -87,8 +87,7 @@ const SuperAdminUI: React.FC = () => {
       await Promise.all([
         fetchRestaurants(),
         fetchCustomers(),
-        transactionsData,
-        supportTicketsData
+        fetchTransactions(),
         fetchSystemStats()
       ]);
     } catch (error) {
@@ -221,8 +220,7 @@ const SuperAdminUI: React.FC = () => {
       ] = await Promise.all([
         supabase.from('restaurants').select('*', { count: 'exact', head: true }),
         supabase.from('customers').select('*', { count: 'exact', head: true }),
-        fetchTransactions(),
-        fetchSupportTickets()
+        supabase.from('transactions').select('*', { count: 'exact', head: true }),
         supabase.from('transactions').select('points').gt('points', 0),
         supabase.from('customers').select('total_spent')
       ]);
@@ -230,7 +228,6 @@ const SuperAdminUI: React.FC = () => {
       const totalPointsIssued = pointsData.data?.reduce((sum, t) => sum + t.points, 0) || 0;
       const totalRevenueTracked = revenueData.data?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
       const activeRestaurants = restaurants.filter(r => 
-      setSupportTickets(supportTicketsData);
         r.customer_count && r.customer_count > 0
       ).length;
 
@@ -465,6 +462,24 @@ const SuperAdminUI: React.FC = () => {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setActiveTab('overview')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === 'overview' ? 'bg-[#1E2A78] text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Overview
+              </button>
+              <button
+                onClick={() => setActiveTab('support')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  activeTab === 'support' ? 'bg-[#1E2A78] text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Support ({supportTickets.filter(t => t.status === 'open').length})
+              </button>
+            </div>
             <div className="w-10 h-10 bg-gradient-to-br from-red-600 to-red-800 rounded-xl flex items-center justify-center">
               <Shield className="w-6 h-6 text-white" />
             </div>
