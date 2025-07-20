@@ -97,7 +97,7 @@ const SuperAdminUI: React.FC = () => {
     }
   };
 
- const fetchRestaurants = async () => {
+const fetchRestaurants = async () => {
   try {
     const { data: restaurantData, error } = await supabase
       .from('restaurants')
@@ -116,7 +116,6 @@ const SuperAdminUI: React.FC = () => {
 
         try {
           const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
-
           const first = userData.user?.user_metadata?.first_name;
           const last = userData.user?.user_metadata?.last_name;
 
@@ -146,6 +145,7 @@ const SuperAdminUI: React.FC = () => {
     console.error('Error fetching restaurants:', error);
   }
 };
+
 
   //     // Fetch owner emails separately
   //     const restaurantsWithOwners = await Promise.all(
