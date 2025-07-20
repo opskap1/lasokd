@@ -20,6 +20,7 @@ interface Restaurant {
   created_at: string;
   updated_at: string;
   owner_email?: string;
+  owner_name?: string;
   customer_count?: number;
   total_revenue?: number;
   total_points_issued?: number;
@@ -39,6 +40,7 @@ interface Customer {
   total_spent: number;
   created_at: string;
   restaurant_name?: string;
+  restaurants?: { name: string };
 }
 
 interface Transaction {
@@ -52,6 +54,8 @@ interface Transaction {
   created_at: string;
   customer_name?: string;
   restaurant_name?: string;
+  customers?: { first_name: string; last_name: string };
+  restaurants?: { name: string };
 }
 
 interface SystemStats {
@@ -97,84 +101,54 @@ const SuperAdminUI: React.FC = () => {
     }
   };
 
-const fetchRestaurants = async () => {
-  try {
-    const { data: restaurantData, error } = await supabase
-      .from('restaurants')
-      .select('*')
-      .order('created_at', { ascending: false });
+  const fetchRestaurants = async () => {
+    try {
+      const { data: restaurantData, error } = await supabase
+        .from('restaurants')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    const restaurantsWithStats = await Promise.all(
-      (restaurantData || []).map(async (restaurant) => {
-        const [customerCount, revenue, pointsIssued] = await Promise.all([
-          getCustomerCount(restaurant.id),
-          getTotalRevenue(restaurant.id),
-          getTotalPointsIssued(restaurant.id)
-        ]);
+      const restaurantsWithStats = await Promise.all(
+        (restaurantData || []).map(async (restaurant) => {
+          const [customerCount, revenue, pointsIssued] = await Promise.all([
+            getCustomerCount(restaurant.id),
+            getTotalRevenue(restaurant.id),
+            getTotalPointsIssued(restaurant.id)
+          ]);
 
-        try {
-          const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
-          const first = userData.user?.user_metadata?.first_name;
-          const last = userData.user?.user_metadata?.last_name;
+          try {
+            const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
+            const first = userData.user?.user_metadata?.first_name;
+            const last = userData.user?.user_metadata?.last_name;
 
-          return {
-            ...restaurant,
-            owner_email: userData.user?.email || 'Unknown',
-            owner_name: (first && last) ? `${first} ${last}` : 'Unknown',
-            customer_count: customerCount,
-            total_revenue: revenue,
-            total_points_issued: pointsIssued
-          };
-        } catch {
-          return {
-            ...restaurant,
-            owner_email: 'Unknown',
-            owner_name: 'Unknown',
-            customer_count: customerCount,
-            total_revenue: revenue,
-            total_points_issued: pointsIssued
-          };
-        }
-      })
-    );
+            return {
+              ...restaurant,
+              owner_email: userData.user?.email || 'Unknown',
+              owner_name: (first && last) ? `${first} ${last}` : 'Unknown',
+              customer_count: customerCount,
+              total_revenue: revenue,
+              total_points_issued: pointsIssued
+            };
+          } catch {
+            return {
+              ...restaurant,
+              owner_email: 'Unknown',
+              owner_name: 'Unknown',
+              customer_count: customerCount,
+              total_revenue: revenue,
+              total_points_issued: pointsIssued
+            };
+          }
+        })
+      );
 
-    setRestaurants(restaurantsWithStats);
-  } catch (error) {
-    console.error('Error fetching restaurants:', error);
-  }
-};
-
-
-  //     // Fetch owner emails separately
-  //     const restaurantsWithOwners = await Promise.all(
-  //       (restaurants || []).map(async (restaurant) => {
-  //         try {
-  //           const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
-  //           return {
-  //             ...restaurant,
-  //             owner_email: userData.user?.email || 'Unknown',
-  //             owner_name: (userData.user?.user_metadata?.first_name && userData.user?.user_metadata?.last_name)
-  // ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
-  // : 'Unknown'
-
-  //           };
-  //         } catch (err) {
-  //           return {
-  //             ...restaurant, 
-  //             owner_email: 'Unknown',
-  //             owner_name: 'Unknown'
-  //           };
-  //         }
-  //       })
-  //     );
-
-  //     return restaurantsWithOwners;
-  //   } catch (error) { 
-  //     console.error('Error fetching restaurants:', error);
-  //   }
-  // };
+      setRestaurants(restaurantsWithStats);
+    } catch (error) {
+      console.error('Error fetching restaurants:', error);
+    }
+  };
 
   const fetchCustomers = async () => {
     try {
@@ -365,35 +339,27 @@ const fetchRestaurants = async () => {
 
   const resetRestaurantData = async (restaurantId: string) => {
     try {
-      // Use a more comprehensive reset approach
+      // Delete all transactions for this restaurant
       const { error: transactionError } = await supabase
         .from('transactions')
         .delete()
         .eq('restaurant_id', restaurantId);
 
+      // Delete all redemptions for this restaurant
       const { error: redemptionError } = await supabase
         .from('reward_redemptions')
         .delete()
         .eq('restaurant_id', restaurantId);
 
+      // Delete all customers for this restaurant
       const { error: customerError } = await supabase
         .from('customers')
         .delete()
         .eq('restaurant_id', restaurantId);
 
-      // Delete all transactions
-      await supabase
-        .from('transactions')
-        .delete()
-        .eq('restaurant_id', restaurantId);
-
-      // Delete all redemptions
-      await supabase
-        .from('reward_redemptions')
       if (transactionError || redemptionError || customerError) {
         throw new Error('Failed to reset restaurant data');
       }
-        .eq('restaurant_id', restaurantId);
 
       await fetchAllData();
     } catch (error) {
@@ -539,139 +505,7 @@ const fetchRestaurants = async () => {
       {/* Main Content */}
       <main className="p-6">
         {/* System Overview */}
-        {activeTab === 'support' ? (
-          <div className="space-y-6">
-            <div className="flex gap-6">
-              {/* Support Tickets List */}
-              <div className="w-1/2 bg-white rounded-2xl border border-gray-200">
-                <div className="p-4 border-b border-gray-200">
-                  <h3 className="font-semibold text-gray-900">Support Tickets</h3>
-                </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {supportTickets.length === 0 ? (
-                    <div className="p-8 text-center">
-                      <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-2" />
-                      <p className="text-gray-500">No support tickets</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-gray-200">
-                      {supportTickets.map((ticket) => (
-                        <div
-                          key={ticket.id}
-                          className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
-                            selectedTicket?.id === ticket.id ? 'bg-blue-50' : ''
-                          }`}
-                          onClick={() => fetchTicketMessages(ticket)}
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <h4 className="font-medium text-gray-900 text-sm">{ticket.title}</h4>
-                            <div className="flex gap-1">
-                              <span className={`text-xs px-2 py-1 rounded-full ${
-                                ticket.status === 'open' ? 'bg-blue-100 text-blue-800' :
-                                ticket.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
-                                ticket.status === 'resolved' ? 'bg-green-100 text-green-800' :
-                                'bg-gray-100 text-gray-800'
-                              }`}>
-                                {ticket.status.replace('_', ' ')}
-                              </span>
-                            </div>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-2">{ticket.description}</p>
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-500">
-                              {ticket.restaurant?.name || 'Unknown Restaurant'}
-                            </span>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleTicketStatusUpdate(ticket.id, 'in_progress');
-                                }}
-                                className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200"
-                              >
-                                In Progress
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleTicketStatusUpdate(ticket.id, 'resolved');
-                                }}
-                                className="text-xs px-2 py-1 bg-green-100 text-green-800 rounded hover:bg-green-200"
-                              >
-                                Resolve
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Ticket Messages */}
-              <div className="w-1/2 bg-white rounded-2xl border border-gray-200 flex flex-col">
-                {selectedTicket ? (
-                  <>
-                    <div className="p-4 border-b border-gray-200">
-                      <h3 className="font-semibold text-gray-900">{selectedTicket.title}</h3>
-                      <p className="text-sm text-gray-600">{selectedTicket.restaurant?.name}</p>
-                    </div>
-                    
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-64">
-                      {ticketMessages.map((message) => (
-                        <div
-                          key={message.id}
-                          className={`flex ${message.sender_type === 'super_admin' ? 'justify-end' : 'justify-start'}`}
-                        >
-                          <div className={`max-w-xs px-3 py-2 rounded-lg text-sm ${
-                            message.sender_type === 'super_admin'
-                              ? 'bg-[#1E2A78] text-white'
-                              : 'bg-gray-200 text-gray-900'
-                          }`}>
-                            <p>{message.message}</p>
-                            <p className={`text-xs mt-1 ${
-                              message.sender_type === 'super_admin' ? 'text-blue-200' : 'text-gray-500'
-                            }`}>
-                              {new Date(message.created_at).toLocaleTimeString()}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    
-                    <div className="p-4 border-t border-gray-200">
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={adminReply}
-                          onChange={(e) => setAdminReply(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && !sendingReply && handleSendAdminReply()}
-                          placeholder="Type your reply..."
-                          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-                        />
-                        <button
-                          onClick={handleSendAdminReply}
-                          disabled={sendingReply || !adminReply.trim()}
-                          className="px-3 py-2 bg-[#1E2A78] text-white rounded-lg hover:bg-[#3B4B9A] transition-colors disabled:opacity-50 text-sm"
-                        >
-                          {sendingReply ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send'}
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="text-center">
-                      <MessageSquare className="h-12 w-12 text-gray-300 mx-auto mb-2" />
-                      <p className="text-gray-500">Select a ticket to view messages</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : (
+        {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* System Stats */}
             {systemStats && (
