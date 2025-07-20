@@ -137,9 +137,10 @@ const SuperAdminUI: React.FC = () => {
             return {
               ...restaurant,
               owner_email: userData.user?.email || 'Unknown',
-              owner_name: userData.user?.user_metadata?.first_name && userData.user?.user_metadata?.last_name
-                ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
-                : 'Unknown'
+              owner_name: (userData.user?.user_metadata?.first_name && userData.user?.user_metadata?.last_name)
+  ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
+  : 'Unknown'
+
             };
           } catch (err) {
             return {
