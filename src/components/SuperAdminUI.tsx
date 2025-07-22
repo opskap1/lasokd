@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   ChefHat, Users, Building, DollarSign, TrendingUp, Gift, 
   AlertCircle, CheckCircle, RefreshCw, Trash2, Edit3, Plus,
@@ -91,6 +92,16 @@ const SuperAdminUI: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'restaurants' | 'customers' | 'transactions' | 'support' | 'system'>('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const navigate = useNavigate();
+
+  // Check super admin authentication
+  useEffect(() => {
+    const isAuthenticated = localStorage.getItem('super_admin_authenticated');
+    if (!isAuthenticated) {
+      navigate('/super-admin-login');
+      return;
+    }
+  }, [navigate]);
   
   // Data states
   const [systemStats, setSystemStats] = useState<SystemStats>({
@@ -171,13 +182,22 @@ const SuperAdminUI: React.FC = () => {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      await Promise.all([
-        fetchSystemStats(),
+      
+      // Fetch system-wide data (not restaurant-specific)
+      const [restaurantsData, allCustomersData, allTransactionsData, supportData] = await Promise.all([
         fetchRestaurants(),
-        fetchCustomers(),
-        fetchTransactions(),
+        fetchAllCustomers(),
+        fetchAllTransactions(),
         fetchSupportTickets()
       ]);
+
+      setRestaurants(restaurantsData);
+      setCustomers(allCustomersData);
+      setTransactions(allTransactionsData);
+      setSupportTickets(supportData);
+      
+      // Calculate system-wide stats
+      await fetchSystemStats();
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -235,32 +255,41 @@ const SuperAdminUI: React.FC = () => {
 
   const fetchRestaurants = async () => {
     try {
-      // Get restaurants without trying to join with auth.users
+      console.log('🔍 Fetching all restaurants...');
+      
+      // Fetch restaurants without any joins to avoid schema cache errors
       const { data: restaurantsData, error } = await supabase
         .from('restaurants')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Error fetching restaurants:', error);
+        throw error;
+      }
 
-      // Fetch additional data for each restaurant
-      const restaurantsWithData = await Promise.all(
+      console.log('✅ Restaurants fetched:', restaurantsData?.length || 0);
+      
+      // Fetch owner details separately for each restaurant
+      const restaurantsWithOwners = await Promise.all(
         (restaurantsData || []).map(async (restaurant) => {
           try {
-            // Get owner info from auth
-            let ownerEmail = '';
-            let ownerName = '';
-            try {
-              const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
-              if (userData.user) {
-                ownerEmail = userData.user.email || '';
-                const firstName = userData.user.user_metadata?.first_name || '';
-                const lastName = userData.user.user_metadata?.last_name || '';
-                ownerName = `${firstName} ${lastName}`.trim() || ownerEmail.split('@')[0];
-              }
-            } catch (authError) {
-              console.warn(`Could not fetch owner data for restaurant ${restaurant.id}:`, authError);
+            // Get owner details from auth.users
+            const { data: userData, error: userError } = await supabase.auth.admin.getUserById(restaurant.owner_id);
+            
+            if (userError) {
+              console.warn(`⚠️ Could not fetch owner for restaurant ${restaurant.id}:`, userError);
+              return {
+                ...restaurant,
+                owner_email: restaurant.owner_id || 'Unknown',
+                owner_name: 'Unknown User'
+              };
             }
+
+            const user = userData.user;
+            const firstName = user?.user_metadata?.first_name || '';
+            const lastName = user?.user_metadata?.last_name || '';
+            const ownerName = `${firstName} ${lastName}`.trim() || user?.email?.split('@')[0] || 'Unknown';
 
             // Get customer count
             const { data: customersData } = await supabase
@@ -282,7 +311,7 @@ const SuperAdminUI: React.FC = () => {
 
             return {
               ...restaurant,
-              owner_email: ownerEmail,
+              owner_email: user?.email || 'Unknown',
               owner_name: ownerName,
               customer_count,
               total_revenue,
@@ -306,14 +335,17 @@ const SuperAdminUI: React.FC = () => {
         })
       );
 
-      setRestaurants(restaurantsWithData);
-    } catch (error) {
-      console.error('Error fetching restaurants:', error);
+      return restaurantsWithOwners;
+    } catch (error: any) {
+      console.error('❌ Error fetching restaurants:', error);
+      // Return empty array instead of throwing to prevent UI crash
+      return [];
     }
   };
 
-  const fetchCustomers = async () => {
+  const fetchAllCustomers = async () => {
     try {
+      console.log('🔍 Fetching all customers across all restaurants...');
       const { data, error } = await supabase
         .from('customers')
         .select(`
@@ -323,14 +355,17 @@ const SuperAdminUI: React.FC = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setCustomers(data || []);
-    } catch (error) {
-      console.error('Error fetching customers:', error);
+      console.log('✅ All customers fetched:', data?.length || 0);
+      return data || [];
+    } catch (error: any) {
+      console.error('❌ Error fetching all customers:', error);
+      return [];
     }
   };
 
-  const fetchTransactions = async () => {
+  const fetchAllTransactions = async () => {
     try {
+      console.log('🔍 Fetching all transactions across all restaurants...');
       const { data, error } = await supabase
         .from('transactions')
         .select(`
@@ -342,14 +377,17 @@ const SuperAdminUI: React.FC = () => {
         .limit(100);
 
       if (error) throw error;
-      setTransactions(data || []);
-    } catch (error) {
-      console.error('Error fetching transactions:', error);
+      console.log('✅ All transactions fetched:', data?.length || 0);
+      return data || [];
+    } catch (error: any) {
+      console.error('❌ Error fetching all transactions:', error);
+      return [];
     }
   };
 
   const fetchSupportTickets = async () => {
     try {
+      console.log('🔍 Fetching all support tickets...');
       const { data, error } = await supabase
         .from('support_tickets')
         .select(`
@@ -359,9 +397,11 @@ const SuperAdminUI: React.FC = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setSupportTickets(data || []);
-    } catch (error) {
-      console.error('Error fetching support tickets:', error);
+      console.log('✅ Support tickets fetched:', data?.length || 0);
+      return data || [];
+    } catch (error: any) {
+      console.error('❌ Error fetching support tickets:', error);
+      return [];
     }
   };
 
@@ -383,6 +423,8 @@ const SuperAdminUI: React.FC = () => {
   const handleCreateRestaurant = async () => {
     try {
       setLoading(true);
+      
+      console.log('🏗️ Creating new restaurant...');
 
       // Create user account
       const { data: userData, error: userError } = await supabase.auth.admin.createUser({
@@ -399,6 +441,7 @@ const SuperAdminUI: React.FC = () => {
       if (userError) throw userError;
 
       // Create restaurant
+      console.log('🏪 Creating restaurant record...');
       const slug = `${restaurantForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
       
       const { data: restaurantData, error: restaurantError } = await supabase
@@ -428,6 +471,7 @@ const SuperAdminUI: React.FC = () => {
       if (restaurantError) throw restaurantError;
 
       // Create sample rewards
+      console.log('🎁 Creating sample rewards...');
       const sampleRewards = [
         { name: 'Free Appetizer', description: 'Choose any appetizer from our menu', points_required: 100, category: 'food', min_tier: 'bronze' },
         { name: 'Free Dessert', description: 'Complimentary dessert of your choice', points_required: 150, category: 'food', min_tier: 'bronze' },
@@ -443,6 +487,7 @@ const SuperAdminUI: React.FC = () => {
           }))
         );
 
+      console.log('✅ Restaurant created successfully');
       setShowCreateRestaurant(false);
       setRestaurantForm({ name: '', ownerEmail: '', ownerFirstName: '', ownerLastName: '', ownerPassword: '' });
       await fetchAllData();
@@ -489,6 +534,7 @@ const SuperAdminUI: React.FC = () => {
 
     try {
       setLoading(true);
+      console.log('🗑️ Deleting restaurant:', restaurantId);
 
       // Delete in proper order to handle foreign key constraints
       await supabase.from('support_messages').delete().eq('ticket_id', 'in', 
@@ -503,8 +549,9 @@ const SuperAdminUI: React.FC = () => {
       await supabase.from('restaurants').delete().eq('id', restaurantId);
 
       await fetchAllData();
+      console.log('✅ Restaurant deleted successfully');
     } catch (error: any) {
-      console.error('Error deleting restaurant:', error);
+      console.error('❌ Error deleting restaurant:', error);
       alert(error.message || 'Failed to delete restaurant');
     } finally {
       setLoading(false);
@@ -518,6 +565,7 @@ const SuperAdminUI: React.FC = () => {
 
     try {
       setLoading(true);
+      console.log('🔄 Resetting restaurant data:', restaurantId);
 
       // Delete customer-related data in proper order
       await supabase.from('support_messages').delete().eq('ticket_id', 'in', 
@@ -534,8 +582,9 @@ const SuperAdminUI: React.FC = () => {
         .eq('restaurant_id', restaurantId);
 
       await fetchAllData();
+      console.log('✅ Restaurant data reset successfully');
     } catch (error: any) {
-      console.error('Error resetting restaurant data:', error);
+      console.error('❌ Error resetting restaurant data:', error);
       alert(error.message || 'Failed to reset restaurant data');
     } finally {
       setLoading(false);
@@ -549,6 +598,7 @@ const SuperAdminUI: React.FC = () => {
 
     try {
       setLoading(true);
+      console.log('🚨 Performing system-wide reset...');
 
       // Delete all data in proper order
       await supabase.from('support_messages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
@@ -564,8 +614,9 @@ const SuperAdminUI: React.FC = () => {
         .neq('id', '00000000-0000-0000-0000-000000000000');
 
       await fetchAllData();
+      console.log('✅ System-wide reset completed');
     } catch (error: any) {
-      console.error('Error resetting system data:', error);
+      console.error('❌ Error resetting system data:', error);
       alert(error.message || 'Failed to reset system data');
     } finally {
       setLoading(false);
@@ -594,7 +645,7 @@ const SuperAdminUI: React.FC = () => {
       setShowCustomerModal(false);
       setSelectedCustomer(null);
       setCustomerPointsAdjustment({ points: 0, reason: '' });
-      await fetchCustomers();
+      await fetchAllCustomers();
     } catch (error: any) {
       console.error('Error adjusting customer points:', error);
       alert(error.message || 'Failed to adjust customer points');
@@ -644,6 +695,12 @@ const SuperAdminUI: React.FC = () => {
     } catch (error) {
       console.error('Error updating ticket status:', error);
     }
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem('super_admin_authenticated');
+    localStorage.removeItem('super_admin_login_time');
+    navigate('/super-admin-login');
   };
 
   const filteredRestaurants = restaurants.filter(restaurant =>
@@ -703,6 +760,14 @@ const SuperAdminUI: React.FC = () => {
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
               {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+            
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+            >
+              <LogOut className="h-4 w-4" />
+              Sign Out
             </button>
             
             <div className="flex items-center gap-2 px-3 py-2 bg-red-100 text-red-800 rounded-lg">

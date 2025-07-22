@@ -13,6 +13,7 @@ import BranchManagement from './components/BranchManagement';
 import StaffUI from './components/StaffUI';
 import SuperAdminUI from './components/SuperAdminUI';
 import SupportUI from './components/SupportUI';
+import SuperAdminLogin from './components/SuperAdminLogin';
 
 
 
@@ -77,6 +78,11 @@ function App() {
           <Route 
             path="/super-admin" 
             element={<SuperAdminUI />}
+          />
+          
+          <Route 
+            path="/super-admin-login" 
+            element={<SuperAdminLogin />}
           />
           
           <Route 
