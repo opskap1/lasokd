@@ -6,7 +6,7 @@ import {
   Search, Filter, Settings, Database, Shield, Zap, MessageSquare,
   Eye, EyeOff, Save, X, Crown, Award, Sparkles, BarChart3,
   Clock, User, Mail, Phone, Calendar, Target, Percent,
-  Activity, Globe, Server, Wifi, HardDrive, Loader2
+  Activity, Globe, Server, Wifi, HardDrive, Loader2, logout
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
