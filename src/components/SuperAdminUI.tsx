@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BarChart3, Users, Building, DollarSign, Gift, TrendingUp, 
-  AlertCircle, CheckCircle, RefreshCw, Search, Filter, 
-  Settings, Trash2, Edit3, Plus, Eye, MessageSquare,
-  Crown, Award, ChefHat, Sparkles, Target, Calculator,
-  X, Save, Loader2, Clock, User, Mail, Phone,
-  Database, Server, Zap, Shield, Activity, Bell,
-  PieChart, LineChart, MoreVertical, ExternalLink,
-  Monitor, Wifi, HardDrive, Cpu, MemoryStick
+  ChefHat, Users, Building, DollarSign, TrendingUp, Gift, 
+  AlertCircle, CheckCircle, RefreshCw, Trash2, Edit3, Plus,
+  Search, Filter, Settings, Database, Shield, Zap, MessageSquare,
+  Eye, EyeOff, Save, X, Crown, Award, Sparkles, BarChart3,
+  Clock, User, Mail, Phone, Calendar, Target, Percent,
+  Activity, Globe, Server, Wifi, HardDrive, Loader2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { SupportService, SupportTicket, SupportMessage } from '../services/supportService';
 
 interface SystemStats {
   totalRestaurants: number;
@@ -20,7 +17,6 @@ interface SystemStats {
   totalPointsIssued: number;
   totalRevenue: number;
   totalRedemptions: number;
-  systemHealth: 'healthy' | 'warning' | 'critical';
 }
 
 interface Restaurant {
@@ -29,18 +25,15 @@ interface Restaurant {
   slug: string;
   owner_id: string;
   settings: any;
-  roi_settings: any;
   created_at: string;
   updated_at: string;
   owner_email?: string;
   owner_name?: string;
   customer_count?: number;
-  revenue?: number;
+  total_revenue?: number;
   points_issued?: number;
   redemptions?: number;
   last_activity?: string;
-  most_visited_tabs?: string[];
-  login_frequency?: number;
 }
 
 interface Customer {
@@ -49,12 +42,14 @@ interface Customer {
   first_name: string;
   last_name: string;
   email: string;
+  phone?: string;
   total_points: number;
+  lifetime_points: number;
   current_tier: string;
   total_spent: number;
   visit_count: number;
   created_at: string;
-  restaurant_name?: string;
+  restaurant?: { name: string };
 }
 
 interface Transaction {
@@ -66,311 +61,322 @@ interface Transaction {
   amount_spent?: number;
   description?: string;
   created_at: string;
-  restaurant_name?: string;
-  customer_name?: string;
+  customer?: { first_name: string; last_name: string };
+  restaurant?: { name: string };
+}
+
+interface SupportTicket {
+  id: string;
+  restaurant_id: string;
+  title: string;
+  description: string;
+  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  category: string;
+  created_by_user_id: string;
+  created_at: string;
+  restaurant?: { name: string };
+}
+
+interface SupportMessage {
+  id: string;
+  ticket_id: string;
+  sender_type: 'restaurant_manager' | 'super_admin';
+  sender_id: string;
+  message: string;
+  created_at: string;
 }
 
 const SuperAdminUI: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'restaurants' | 'customers' | 'transactions' | 'support' | 'system'>('overview');
-  const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // Data states
+  const [systemStats, setSystemStats] = useState<SystemStats>({
+    totalRestaurants: 0,
+    activeRestaurants: 0,
+    totalCustomers: 0,
+    totalTransactions: 0,
+    totalPointsIssued: 0,
+    totalRevenue: 0,
+    totalRedemptions: 0
+  });
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
-  const [messages, setMessages] = useState<SupportMessage[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
+  
+  // UI states
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterRestaurant, setFilterRestaurant] = useState('all');
-  const [showCreateRestaurant, setShowCreateRestaurant] = useState(false);
-  const [editingRestaurant, setEditingRestaurant] = useState<Restaurant | null>(null);
+  const [selectedRestaurant, setSelectedRestaurant] = useState<string>('all');
   const [expandedRestaurant, setExpandedRestaurant] = useState<string | null>(null);
+  const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
+  const [newMessage, setNewMessage] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
-
-  const [newRestaurantData, setNewRestaurantData] = useState({
+  
+  // Modal states
+  const [showCreateRestaurant, setShowCreateRestaurant] = useState(false);
+  const [showEditRestaurant, setShowEditRestaurant] = useState(false);
+  const [editingRestaurant, setEditingRestaurant] = useState<Restaurant | null>(null);
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  
+  // Form states
+  const [restaurantForm, setRestaurantForm] = useState({
     name: '',
     ownerEmail: '',
-    ownerPassword: '',
     ownerFirstName: '',
-    ownerLastName: ''
+    ownerLastName: '',
+    ownerPassword: ''
+  });
+  const [customerPointsAdjustment, setCustomerPointsAdjustment] = useState({
+    points: 0,
+    reason: ''
   });
 
   useEffect(() => {
     fetchAllData();
     
     // Set up real-time subscriptions for support
-    const ticketsSubscription = SupportService.subscribeToTickets((payload) => {
-      if (payload.eventType === 'INSERT') {
-        setSupportTickets(prev => [payload.new, ...prev]);
-      } else if (payload.eventType === 'UPDATE') {
-        setSupportTickets(prev => prev.map(ticket => 
-          ticket.id === payload.new.id ? payload.new : ticket
-        ));
-      }
-    });
+    const ticketsSubscription = supabase
+      .channel('support_tickets_admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets' }, () => {
+        fetchSupportTickets();
+      })
+      .subscribe();
+
+    const messagesSubscription = supabase
+      .channel('support_messages_admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_messages' }, () => {
+        if (selectedTicket) {
+          fetchTicketMessages(selectedTicket.id);
+        }
+      })
+      .subscribe();
 
     return () => {
       ticketsSubscription.unsubscribe();
+      messagesSubscription.unsubscribe();
     };
   }, []);
 
   useEffect(() => {
     if (selectedTicket) {
-      fetchMessages();
-      
-      const subscription = SupportService.subscribeToMessages(
-        selectedTicket.id,
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setMessages(prev => [...prev, payload.new]);
-          }
-        }
-      );
-
-      return () => {
-        subscription.unsubscribe();
-      };
+      fetchTicketMessages(selectedTicket.id);
     }
   }, [selectedTicket]);
 
   const fetchAllData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      setError(null);
-
-      const [
-        systemStatsData,
-        restaurantsData,
-        customersData,
-        transactionsData,
-        supportData
-      ] = await Promise.all([
+      await Promise.all([
         fetchSystemStats(),
         fetchRestaurants(),
         fetchCustomers(),
         fetchTransactions(),
         fetchSupportTickets()
       ]);
-
-      setSystemStats(systemStatsData);
-      setRestaurants(restaurantsData);
-      setCustomers(customersData);
-      setTransactions(transactionsData);
-      setSupportTickets(supportData);
-
-    } catch (err: any) {
-      console.error('Error fetching super admin data:', err);
-      setError(err.message || 'Failed to load super admin data');
+    } catch (error) {
+      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchSystemStats = async (): Promise<SystemStats> => {
+  const handleRefresh = async () => {
+    setRefreshing(true);
     try {
-      // Get restaurant stats
-      const { data: restaurants } = await supabase
+      await fetchAllData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const fetchSystemStats = async () => {
+    try {
+      // Get all restaurants
+      const { data: restaurantsData } = await supabase
         .from('restaurants')
         .select('id, created_at');
 
-      // Get customer stats
-      const { data: customers } = await supabase
+      // Get all customers
+      const { data: customersData } = await supabase
         .from('customers')
-        .select('id, total_spent');
+        .select('total_spent');
 
-      // Get transaction stats
-      const { data: transactions } = await supabase
+      // Get all transactions
+      const { data: transactionsData } = await supabase
         .from('transactions')
         .select('points, amount_spent, type');
 
-      const totalRestaurants = restaurants?.length || 0;
-      const activeRestaurants = restaurants?.filter(r => {
-        const createdAt = new Date(r.created_at);
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        return createdAt > thirtyDaysAgo;
-      }).length || 0;
+      const totalRestaurants = restaurantsData?.length || 0;
+      const activeRestaurants = totalRestaurants; // All restaurants are considered active
+      const totalCustomers = customersData?.length || 0;
+      const totalTransactions = transactionsData?.length || 0;
+      const totalPointsIssued = transactionsData?.filter(t => t.points > 0).reduce((sum, t) => sum + t.points, 0) || 0;
+      const totalRevenue = customersData?.reduce((sum, c) => sum + (c.total_spent || 0), 0) || 0;
+      const totalRedemptions = transactionsData?.filter(t => t.type === 'redemption').length || 0;
 
-      const totalCustomers = customers?.length || 0;
-      const totalTransactions = transactions?.length || 0;
-      const totalPointsIssued = transactions?.filter(t => t.points > 0).reduce((sum, t) => sum + t.points, 0) || 0;
-      const totalRevenue = customers?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
-      const totalRedemptions = transactions?.filter(t => t.type === 'redemption').length || 0;
-
-      // Determine system health
-      let systemHealth: 'healthy' | 'warning' | 'critical' = 'healthy';
-      if (totalRestaurants === 0) systemHealth = 'critical';
-      else if (activeRestaurants < totalRestaurants * 0.5) systemHealth = 'warning';
-
-      return {
+      setSystemStats({
         totalRestaurants,
         activeRestaurants,
         totalCustomers,
         totalTransactions,
         totalPointsIssued,
         totalRevenue,
-        totalRedemptions,
-        systemHealth
-      };
+        totalRedemptions
+      });
     } catch (error) {
       console.error('Error fetching system stats:', error);
-      return {
-        totalRestaurants: 0,
-        activeRestaurants: 0,
-        totalCustomers: 0,
-        totalTransactions: 0,
-        totalPointsIssued: 0,
-        totalRevenue: 0,
-        totalRedemptions: 0,
-        systemHealth: 'critical'
-      };
     }
   };
 
-  const fetchRestaurants = async (): Promise<Restaurant[]> => {
+  const fetchRestaurants = async () => {
     try {
-      const { data: restaurants, error } = await supabase
+      // Get restaurants without trying to join with auth.users
+      const { data: restaurantsData, error } = await supabase
         .from('restaurants')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      // Enhance with additional data
-      const enhancedRestaurants = await Promise.all(
-        (restaurants || []).map(async (restaurant) => {
+      // Fetch additional data for each restaurant
+      const restaurantsWithData = await Promise.all(
+        (restaurantsData || []).map(async (restaurant) => {
           try {
-            // Get owner info
+            // Get owner info from auth
             let ownerEmail = '';
             let ownerName = '';
             try {
               const { data: userData } = await supabase.auth.admin.getUserById(restaurant.owner_id);
               if (userData.user) {
                 ownerEmail = userData.user.email || '';
-                ownerName = userData.user.user_metadata?.first_name && userData.user.user_metadata?.last_name
-                  ? `${userData.user.user_metadata.first_name} ${userData.user.user_metadata.last_name}`
-                  : userData.user.email?.split('@')[0] || '';
+                const firstName = userData.user.user_metadata?.first_name || '';
+                const lastName = userData.user.user_metadata?.last_name || '';
+                ownerName = `${firstName} ${lastName}`.trim() || ownerEmail.split('@')[0];
               }
-            } catch (err) {
-              console.warn('Could not fetch owner data for restaurant:', restaurant.id);
+            } catch (authError) {
+              console.warn(`Could not fetch owner data for restaurant ${restaurant.id}:`, authError);
             }
 
             // Get customer count
-            const { data: customers } = await supabase
+            const { data: customersData } = await supabase
               .from('customers')
               .select('id, total_spent')
               .eq('restaurant_id', restaurant.id);
 
-            // Get transaction stats
-            const { data: transactions } = await supabase
+            // Get transactions for points and redemptions
+            const { data: transactionsData } = await supabase
               .from('transactions')
               .select('points, type, created_at')
               .eq('restaurant_id', restaurant.id);
 
-            const customer_count = customers?.length || 0;
-            const revenue = customers?.reduce((sum, c) => sum + c.total_spent, 0) || 0;
-            const points_issued = transactions?.filter(t => t.points > 0).reduce((sum, t) => sum + t.points, 0) || 0;
-            const redemptions = transactions?.filter(t => t.type === 'redemption').length || 0;
-            
-            // Get last activity
-            const last_activity = transactions?.[0]?.created_at || restaurant.updated_at;
+            const customer_count = customersData?.length || 0;
+            const total_revenue = customersData?.reduce((sum, c) => sum + (c.total_spent || 0), 0) || 0;
+            const points_issued = transactionsData?.filter(t => t.points > 0).reduce((sum, t) => sum + t.points, 0) || 0;
+            const redemptions = transactionsData?.filter(t => t.type === 'redemption').length || 0;
+            const last_activity = transactionsData?.[0]?.created_at || restaurant.created_at;
 
             return {
               ...restaurant,
               owner_email: ownerEmail,
               owner_name: ownerName,
               customer_count,
-              revenue,
+              total_revenue,
               points_issued,
               redemptions,
-              last_activity,
-              most_visited_tabs: ['dashboard', 'customers', 'rewards'], // Mock data - would track in real system
-              login_frequency: Math.floor(Math.random() * 30) + 1 // Mock data
+              last_activity
             };
-          } catch (err) {
-            console.error('Error enhancing restaurant data:', err);
-            return restaurant;
+          } catch (error) {
+            console.error(`Error fetching data for restaurant ${restaurant.id}:`, error);
+            return {
+              ...restaurant,
+              owner_email: 'Unknown',
+              owner_name: 'Unknown',
+              customer_count: 0,
+              total_revenue: 0,
+              points_issued: 0,
+              redemptions: 0,
+              last_activity: restaurant.created_at
+            };
           }
         })
       );
 
-      return enhancedRestaurants;
+      setRestaurants(restaurantsWithData);
     } catch (error) {
       console.error('Error fetching restaurants:', error);
-      return [];
     }
   };
 
-  const fetchCustomers = async (): Promise<Customer[]> => {
+  const fetchCustomers = async () => {
     try {
-      const { data: customers, error } = await supabase
+      const { data, error } = await supabase
         .from('customers')
         .select(`
           *,
+          restaurant:restaurants(name)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setCustomers(data || []);
+    } catch (error) {
+      console.error('Error fetching customers:', error);
+    }
+  };
+
+  const fetchTransactions = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select(`
+          *,
+          customer:customers(first_name, last_name),
           restaurant:restaurants(name)
         `)
         .order('created_at', { ascending: false })
         .limit(100);
 
       if (error) throw error;
-
-      return (customers || []).map(customer => ({
-        ...customer,
-        restaurant_name: customer.restaurant?.name || 'Unknown Restaurant'
-      }));
-    } catch (error) {
-      console.error('Error fetching customers:', error);
-      return [];
-    }
-  };
-
-  const fetchTransactions = async (): Promise<Transaction[]> => {
-    try {
-      const { data: transactions, error } = await supabase
-        .from('transactions')
-        .select(`
-          *,
-          restaurant:restaurants(name),
-          customer:customers(first_name, last_name)
-        `)
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (error) throw error;
-
-      return (transactions || []).map(transaction => ({
-        ...transaction,
-        restaurant_name: transaction.restaurant?.name || 'Unknown Restaurant',
-        customer_name: transaction.customer 
-          ? `${transaction.customer.first_name} ${transaction.customer.last_name}`
-          : 'Unknown Customer'
-      }));
+      setTransactions(data || []);
     } catch (error) {
       console.error('Error fetching transactions:', error);
-      return [];
     }
   };
 
-  const fetchSupportTickets = async (): Promise<SupportTicket[]> => {
+  const fetchSupportTickets = async () => {
     try {
-      const tickets = await SupportService.getAllTickets();
-      return tickets;
+      const { data, error } = await supabase
+        .from('support_tickets')
+        .select(`
+          *,
+          restaurant:restaurants(name)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setSupportTickets(data || []);
     } catch (error) {
       console.error('Error fetching support tickets:', error);
-      return [];
     }
   };
 
-  const fetchMessages = async () => {
-    if (!selectedTicket) return;
-    
+  const fetchTicketMessages = async (ticketId: string) => {
     try {
-      const messagesData = await SupportService.getTicketMessages(selectedTicket.id);
-      setMessages(messagesData);
+      const { data, error } = await supabase
+        .from('support_messages')
+        .select('*')
+        .eq('ticket_id', ticketId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setSupportMessages(data || []);
     } catch (error) {
-      console.error('Error fetching messages:', error);
+      console.error('Error fetching ticket messages:', error);
     }
   };
 
@@ -380,24 +386,25 @@ const SuperAdminUI: React.FC = () => {
 
       // Create user account
       const { data: userData, error: userError } = await supabase.auth.admin.createUser({
-        email: newRestaurantData.ownerEmail,
-        password: newRestaurantData.ownerPassword,
+        email: restaurantForm.ownerEmail,
+        password: restaurantForm.ownerPassword,
+        email_confirm: true,
         user_metadata: {
-          first_name: newRestaurantData.ownerFirstName,
-          last_name: newRestaurantData.ownerLastName,
-          restaurant_name: newRestaurantData.name
+          first_name: restaurantForm.ownerFirstName,
+          last_name: restaurantForm.ownerLastName,
+          restaurant_name: restaurantForm.name
         }
       });
 
       if (userError) throw userError;
 
       // Create restaurant
-      const slug = `${newRestaurantData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+      const slug = `${restaurantForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
       
-      const { data: restaurant, error: restaurantError } = await supabase
+      const { data: restaurantData, error: restaurantError } = await supabase
         .from('restaurants')
         .insert({
-          name: newRestaurantData.name,
+          name: restaurantForm.name,
           owner_id: userData.user.id,
           slug: slug,
           settings: {
@@ -413,13 +420,6 @@ const SuperAdminUI: React.FC = () => {
               gold: 1.5,
               platinum: 2.0
             }
-          },
-          roi_settings: {
-            default_profit_margin: 0.3,
-            estimated_cogs_percentage: 0.4,
-            labor_cost_percentage: 0.25,
-            overhead_percentage: 0.15,
-            target_roi_percentage: 200
           }
         })
         .select()
@@ -429,9 +429,9 @@ const SuperAdminUI: React.FC = () => {
 
       // Create sample rewards
       const sampleRewards = [
-        { name: 'Free Appetizer', description: 'Choose any appetizer', points_required: 100, category: 'food', min_tier: 'bronze' },
-        { name: 'Free Dessert', description: 'Complimentary dessert', points_required: 150, category: 'food', min_tier: 'bronze' },
-        { name: '10% Off Next Visit', description: 'Get 10% discount', points_required: 200, category: 'discount', min_tier: 'bronze' }
+        { name: 'Free Appetizer', description: 'Choose any appetizer from our menu', points_required: 100, category: 'food', min_tier: 'bronze' },
+        { name: 'Free Dessert', description: 'Complimentary dessert of your choice', points_required: 150, category: 'food', min_tier: 'bronze' },
+        { name: 'Free Drink', description: 'Any beverage from our drink menu', points_required: 75, category: 'beverage', min_tier: 'bronze' }
       ];
 
       await supabase
@@ -439,104 +439,187 @@ const SuperAdminUI: React.FC = () => {
         .insert(
           sampleRewards.map(reward => ({
             ...reward,
-            restaurant_id: restaurant.id
+            restaurant_id: restaurantData.id
           }))
         );
 
       setShowCreateRestaurant(false);
-      setNewRestaurantData({
-        name: '',
-        ownerEmail: '',
-        ownerPassword: '',
-        ownerFirstName: '',
-        ownerLastName: ''
-      });
-      
+      setRestaurantForm({ name: '', ownerEmail: '', ownerFirstName: '', ownerLastName: '', ownerPassword: '' });
       await fetchAllData();
-    } catch (err: any) {
-      console.error('Error creating restaurant:', err);
-      setError(err.message || 'Failed to create restaurant');
+    } catch (error: any) {
+      console.error('Error creating restaurant:', error);
+      alert(error.message || 'Failed to create restaurant');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateRestaurant = async () => {
+    if (!editingRestaurant) return;
+
+    try {
+      setLoading(true);
+
+      const { error } = await supabase
+        .from('restaurants')
+        .update({
+          name: restaurantForm.name,
+          slug: restaurantForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+        })
+        .eq('id', editingRestaurant.id);
+
+      if (error) throw error;
+
+      setShowEditRestaurant(false);
+      setEditingRestaurant(null);
+      setRestaurantForm({ name: '', ownerEmail: '', ownerFirstName: '', ownerLastName: '', ownerPassword: '' });
+      await fetchAllData();
+    } catch (error: any) {
+      console.error('Error updating restaurant:', error);
+      alert(error.message || 'Failed to update restaurant');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteRestaurant = async (restaurantId: string) => {
-    if (!confirm('Are you sure? This will delete the restaurant and all associated data permanently.')) {
+    if (!confirm('Are you sure you want to delete this restaurant? This will delete ALL associated data including customers, transactions, and rewards. This action cannot be undone.')) {
       return;
     }
 
     try {
-      const { error } = await supabase
-        .from('restaurants')
-        .delete()
-        .eq('id', restaurantId);
+      setLoading(true);
 
-      if (error) throw error;
+      // Delete in proper order to handle foreign key constraints
+      await supabase.from('support_messages').delete().eq('ticket_id', 'in', 
+        `(SELECT id FROM support_tickets WHERE restaurant_id = '${restaurantId}')`);
+      await supabase.from('support_tickets').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('reward_redemptions').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('transactions').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('rewards').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('customers').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('menu_items').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('branches').delete().eq('restaurant_id', restaurantId);
+      await supabase.from('restaurants').delete().eq('id', restaurantId);
+
       await fetchAllData();
-    } catch (err: any) {
-      console.error('Error deleting restaurant:', err);
-      setError(err.message || 'Failed to delete restaurant');
+    } catch (error: any) {
+      console.error('Error deleting restaurant:', error);
+      alert(error.message || 'Failed to delete restaurant');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleResetRestaurantData = async (restaurantId: string) => {
-    if (!confirm('This will delete all customer data, transactions, and redemptions for this restaurant. Continue?')) {
+    if (!confirm('Are you sure you want to reset all data for this restaurant? This will delete all customers, transactions, and redemptions but keep the restaurant and rewards.')) {
       return;
     }
 
     try {
-      // Delete in correct order to avoid foreign key constraints
+      setLoading(true);
+
+      // Delete customer-related data in proper order
+      await supabase.from('support_messages').delete().eq('ticket_id', 'in', 
+        `(SELECT id FROM support_tickets WHERE restaurant_id = '${restaurantId}')`);
+      await supabase.from('support_tickets').delete().eq('restaurant_id', restaurantId);
       await supabase.from('reward_redemptions').delete().eq('restaurant_id', restaurantId);
       await supabase.from('transactions').delete().eq('restaurant_id', restaurantId);
       await supabase.from('customers').delete().eq('restaurant_id', restaurantId);
-      
+
+      // Reset reward redemption counts
+      await supabase
+        .from('rewards')
+        .update({ total_redeemed: 0 })
+        .eq('restaurant_id', restaurantId);
+
       await fetchAllData();
-    } catch (err: any) {
-      console.error('Error resetting restaurant data:', err);
-      setError(err.message || 'Failed to reset restaurant data');
+    } catch (error: any) {
+      console.error('Error resetting restaurant data:', error);
+      alert(error.message || 'Failed to reset restaurant data');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleAdjustCustomerPoints = async (customerId: string, pointsToAdd: number, reason: string) => {
+  const handleSystemWideReset = async () => {
+    if (!confirm('Are you sure you want to reset ALL data across the entire system? This will delete all customers, transactions, and redemptions for ALL restaurants. This action cannot be undone.')) {
+      return;
+    }
+
     try {
-      const customer = customers.find(c => c.id === customerId);
-      if (!customer) return;
+      setLoading(true);
+
+      // Delete all data in proper order
+      await supabase.from('support_messages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('support_tickets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('reward_redemptions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('transactions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('customers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+      // Reset all reward redemption counts
+      await supabase
+        .from('rewards')
+        .update({ total_redeemed: 0 })
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+
+      await fetchAllData();
+    } catch (error: any) {
+      console.error('Error resetting system data:', error);
+      alert(error.message || 'Failed to reset system data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdjustCustomerPoints = async () => {
+    if (!selectedCustomer) return;
+
+    try {
+      setLoading(true);
 
       const { error } = await supabase.rpc('process_point_transaction', {
-        p_restaurant_id: customer.restaurant_id,
-        p_customer_id: customerId,
-        p_type: pointsToAdd > 0 ? 'bonus' : 'redemption',
-        p_points: pointsToAdd,
-        p_description: `Admin adjustment: ${reason}`,
+        p_restaurant_id: selectedCustomer.restaurant_id,
+        p_customer_id: selectedCustomer.id,
+        p_type: customerPointsAdjustment.points > 0 ? 'bonus' : 'redemption',
+        p_points: customerPointsAdjustment.points,
+        p_description: `Admin adjustment: ${customerPointsAdjustment.reason}`,
         p_amount_spent: 0,
         p_reward_id: null,
         p_branch_id: null
       });
 
       if (error) throw error;
-      await fetchAllData();
-    } catch (err: any) {
-      console.error('Error adjusting customer points:', err);
-      setError(err.message || 'Failed to adjust customer points');
+
+      setShowCustomerModal(false);
+      setSelectedCustomer(null);
+      setCustomerPointsAdjustment({ points: 0, reason: '' });
+      await fetchCustomers();
+    } catch (error: any) {
+      console.error('Error adjusting customer points:', error);
+      alert(error.message || 'Failed to adjust customer points');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSendMessage = async () => {
+  const handleSendSupportMessage = async () => {
     if (!selectedTicket || !newMessage.trim()) return;
 
     try {
       setSendingMessage(true);
-      
-      await SupportService.sendMessage({
-        ticket_id: selectedTicket.id,
-        sender_type: 'super_admin',
-        sender_id: 'super-admin',
-        message: newMessage
-      });
+
+      await supabase
+        .from('support_messages')
+        .insert({
+          ticket_id: selectedTicket.id,
+          sender_type: 'super_admin',
+          sender_id: 'super-admin',
+          message: newMessage
+        });
 
       setNewMessage('');
-      await fetchMessages();
+      await fetchTicketMessages(selectedTicket.id);
     } catch (error) {
       console.error('Error sending message:', error);
     } finally {
@@ -546,49 +629,24 @@ const SuperAdminUI: React.FC = () => {
 
   const handleUpdateTicketStatus = async (ticketId: string, status: string) => {
     try {
-      await SupportService.updateTicketStatus(ticketId, status as any, 'super-admin');
+      await supabase
+        .from('support_tickets')
+        .update({ 
+          status,
+          assigned_to_admin: 'super-admin'
+        })
+        .eq('id', ticketId);
+
       await fetchSupportTickets();
-      
-      // Update selected ticket if it's the one being updated
       if (selectedTicket?.id === ticketId) {
-        setSelectedTicket(prev => prev ? { ...prev, status: status as any } : null);
+        setSelectedTicket({ ...selectedTicket, status: status as any });
       }
     } catch (error) {
       console.error('Error updating ticket status:', error);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'open': return 'bg-blue-100 text-blue-800';
-      case 'in_progress': return 'bg-yellow-100 text-yellow-800';
-      case 'resolved': return 'bg-green-100 text-green-800';
-      case 'closed': return 'bg-gray-100 text-gray-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent': return 'bg-red-100 text-red-800';
-      case 'high': return 'bg-orange-100 text-orange-800';
-      case 'medium': return 'bg-yellow-100 text-yellow-800';
-      case 'low': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const filteredRestaurants = restaurants.filter(restaurant => 
+  const filteredRestaurants = restaurants.filter(restaurant =>
     restaurant.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     restaurant.owner_email?.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -597,22 +655,25 @@ const SuperAdminUI: React.FC = () => {
     const matchesSearch = customer.first_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          customer.last_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          customer.email.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesRestaurant = filterRestaurant === 'all' || customer.restaurant_id === filterRestaurant;
+    const matchesRestaurant = selectedRestaurant === 'all' || customer.restaurant_id === selectedRestaurant;
     return matchesSearch && matchesRestaurant;
   });
 
   const filteredTransactions = transactions.filter(transaction => {
-    const matchesSearch = transaction.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchesSearch = transaction.customer?.first_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         transaction.customer?.last_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          transaction.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesRestaurant = filterRestaurant === 'all' || transaction.restaurant_id === filterRestaurant;
+    const matchesRestaurant = selectedRestaurant === 'all' || transaction.restaurant_id === selectedRestaurant;
     return matchesSearch && matchesRestaurant;
   });
 
-  if (loading && !systemStats) {
+  const openTickets = supportTickets.filter(ticket => ticket.status === 'open').length;
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-[#1E2A78] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-600 text-lg">Loading Super Admin Dashboard...</p>
         </div>
       </div>
@@ -625,8 +686,8 @@ const SuperAdminUI: React.FC = () => {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-700 rounded-xl flex items-center justify-center">
-              <Shield className="w-6 h-6 text-white" />
+            <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-red-600 rounded-xl flex items-center justify-center">
+              <ChefHat className="w-7 h-7 text-white" />
             </div>
             <div>
               <h1 className="text-xl font-bold text-gray-900">Super Admin Dashboard</h1>
@@ -635,73 +696,61 @@ const SuperAdminUI: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3">
-            <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-              systemStats?.systemHealth === 'healthy' ? 'bg-green-100 text-green-800' :
-              systemStats?.systemHealth === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-              'bg-red-100 text-red-800'
-            }`}>
-              {systemStats?.systemHealth === 'healthy' ? 'System Healthy' :
-               systemStats?.systemHealth === 'warning' ? 'System Warning' :
-               'System Critical'}
-            </div>
             <button
-              onClick={fetchAllData}
-              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
             >
-              <RefreshCw className="w-5 h-5" />
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
+            
+            <div className="flex items-center gap-2 px-3 py-2 bg-red-100 text-red-800 rounded-lg">
+              <Globe className="w-4 h-4" />
+              <span className="text-sm font-medium">System Admin</span>
+            </div>
           </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="flex border-b border-gray-200">
-          {[
-            { id: 'overview', label: 'Overview', icon: BarChart3 },
-            { id: 'restaurants', label: 'Restaurants', icon: Building },
-            { id: 'customers', label: 'Customers', icon: Users },
-            { id: 'transactions', label: 'Transactions', icon: Activity },
-            { id: 'support', label: `Support ${supportTickets.filter(t => t.status === 'open').length > 0 ? `(${supportTickets.filter(t => t.status === 'open').length})` : ''}`, icon: MessageSquare },
-            { id: 'system', label: 'System', icon: Server }
-          ].map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center gap-2 px-6 py-3 font-medium transition-colors ${
-                  activeTab === tab.id
-                    ? 'text-[#1E2A78] border-b-2 border-[#1E2A78] bg-blue-50'
-                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            );
-          })}
         </div>
       </header>
 
-      {error && (
-        <div className="bg-red-50 border-b border-red-200 text-red-700 px-6 py-4">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5" />
-            <span>{error}</span>
-            <button
-              onClick={() => setError(null)}
-              className="ml-auto p-1 hover:bg-red-100 rounded"
-            >
-              <X className="w-4 h-4" />
-            </button>
+      {/* Navigation */}
+      <nav className="bg-white border-b border-gray-200">
+        <div className="px-6">
+          <div className="flex space-x-8">
+            {[
+              { id: 'overview', label: 'Overview', icon: BarChart3 },
+              { id: 'restaurants', label: 'Restaurants', icon: Building },
+              { id: 'customers', label: 'Customers', icon: Users },
+              { id: 'transactions', label: 'Transactions', icon: Activity },
+              { id: 'support', label: `Support ${openTickets > 0 ? `(${openTickets})` : ''}`, icon: MessageSquare },
+              { id: 'system', label: 'System', icon: Settings }
+            ].map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-2 px-4 py-4 border-b-2 font-medium text-sm transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-red-500 text-red-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
         </div>
-      )}
+      </nav>
 
+      {/* Main Content */}
       <main className="p-6">
         {/* Overview Tab */}
-        {activeTab === 'overview' && systemStats && (
+        {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* System Stats Grid */}
+            {/* System Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div className="bg-white rounded-xl p-6 border border-gray-200">
                 <div className="flex items-center gap-3">
@@ -711,7 +760,6 @@ const SuperAdminUI: React.FC = () => {
                   <div>
                     <p className="text-sm text-gray-600">Total Restaurants</p>
                     <p className="text-2xl font-bold text-gray-900">{systemStats.totalRestaurants}</p>
-                    <p className="text-xs text-green-600">{systemStats.activeRestaurants} active</p>
                   </div>
                 </div>
               </div>
@@ -723,7 +771,7 @@ const SuperAdminUI: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Total Customers</p>
-                    <p className="text-2xl font-bold text-gray-900">{systemStats.totalCustomers.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-gray-900">{systemStats.totalCustomers}</p>
                   </div>
                 </div>
               </div>
@@ -731,7 +779,7 @@ const SuperAdminUI: React.FC = () => {
               <div className="bg-white rounded-xl p-6 border border-gray-200">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                    <Sparkles className="w-6 h-6 text-purple-600" />
+                    <TrendingUp className="w-6 h-6 text-purple-600" />
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Points Issued</p>
@@ -753,27 +801,70 @@ const SuperAdminUI: React.FC = () => {
               </div>
             </div>
 
-            {/* Recent Activity */}
-            <div className="bg-white rounded-xl border border-gray-200">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-lg font-semibold text-gray-900">Recent System Activity</h3>
+            {/* System Health */}
+            <div className="bg-white rounded-xl p-6 border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">System Health</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <div>
+                    <p className="font-medium text-green-900">Database</p>
+                    <p className="text-sm text-green-700">Connected</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <div>
+                    <p className="font-medium text-green-900">Auth Service</p>
+                    <p className="text-sm text-green-700">Operational</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <div>
+                    <p className="font-medium text-green-900">Point Engine</p>
+                    <p className="text-sm text-green-700">Running</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                  <div>
+                    <p className="font-medium text-green-900">Support System</p>
+                    <p className="text-sm text-green-700">Active</p>
+                  </div>
+                </div>
               </div>
-              <div className="divide-y divide-gray-100">
+            </div>
+
+            {/* Recent Activity */}
+            <div className="bg-white rounded-xl p-6 border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
+              <div className="space-y-3">
                 {transactions.slice(0, 10).map((transaction) => (
-                  <div key={transaction.id} className="p-4 hover:bg-gray-50">
-                    <div className="flex items-center justify-between">
+                  <div key={transaction.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <Activity className="w-4 h-4 text-blue-600" />
+                      </div>
                       <div>
                         <p className="font-medium text-gray-900">
-                          {transaction.customer_name} • {transaction.restaurant_name}
+                          {transaction.customer?.first_name} {transaction.customer?.last_name}
                         </p>
-                        <p className="text-sm text-gray-600">{transaction.description}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`font-medium ${transaction.points > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {transaction.points > 0 ? '+' : ''}{transaction.points} pts
+                        <p className="text-sm text-gray-600">
+                          {transaction.restaurant?.name} • {transaction.description}
                         </p>
-                        <p className="text-xs text-gray-500">{formatDate(transaction.created_at)}</p>
                       </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-medium ${transaction.points > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {transaction.points > 0 ? '+' : ''}{transaction.points} pts
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        {new Date(transaction.created_at).toLocaleDateString()}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -789,7 +880,7 @@ const SuperAdminUI: React.FC = () => {
               <h2 className="text-xl font-bold text-gray-900">Restaurant Management</h2>
               <button
                 onClick={() => setShowCreateRestaurant(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-[#1E2A78] text-white rounded-lg hover:bg-[#3B4B9A] transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 Create Restaurant
@@ -797,15 +888,17 @@ const SuperAdminUI: React.FC = () => {
             </div>
 
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search restaurants..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-              />
+            <div className="bg-white rounded-xl p-4 border border-gray-200">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search restaurants..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
             {/* Restaurants List */}
@@ -820,122 +913,108 @@ const SuperAdminUI: React.FC = () => {
                         </div>
                         <div>
                           <h3 className="font-semibold text-gray-900">{restaurant.name}</h3>
-                          <p className="text-sm text-gray-600">ID: {restaurant.id}</p>
-                          <p className="text-sm text-gray-600">Slug: {restaurant.slug}</p>
-                          <p className="text-sm text-gray-600">Owner: {restaurant.owner_name || restaurant.owner_email}</p>
+                          <p className="text-sm text-gray-600">
+                            Owner: {restaurant.owner_name} ({restaurant.owner_email})
+                          </p>
+                          <p className="text-xs text-gray-500">ID: {restaurant.id}</p>
                         </div>
                       </div>
                       
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => setExpandedRestaurant(
-                            expandedRestaurant === restaurant.id ? null : restaurant.id
-                          )}
-                          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setEditingRestaurant(restaurant)}
-                          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                          onClick={() => {
+                            setEditingRestaurant(restaurant);
+                            setRestaurantForm({ ...restaurantForm, name: restaurant.name });
+                            setShowEditRestaurant(true);
+                          }}
+                          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
+                        
                         <button
                           onClick={() => handleDeleteRestaurant(restaurant.id)}
-                          className="p-2 text-red-600 hover:bg-red-100 rounded-lg"
+                          className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      </div>
-                    </div>
-
-                    {/* Quick Stats */}
-                    <div className="grid grid-cols-4 gap-4 mt-4">
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-gray-900">{restaurant.customer_count || 0}</p>
-                        <p className="text-xs text-gray-600">Customers</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-gray-900">{(restaurant.revenue || 0).toFixed(0)} AED</p>
-                        <p className="text-xs text-gray-600">Revenue</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-gray-900">{(restaurant.points_issued || 0).toLocaleString()}</p>
-                        <p className="text-xs text-gray-600">Points</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-gray-900">{restaurant.redemptions || 0}</p>
-                        <p className="text-xs text-gray-600">Redemptions</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Expanded Details */}
-                  {expandedRestaurant === restaurant.id && (
-                    <div className="border-t border-gray-200 p-6 bg-gray-50">
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        {/* Loyalty Settings */}
-                        <div>
-                          <h4 className="font-medium text-gray-900 mb-3">Loyalty Settings</h4>
-                          <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Point Value:</span>
-                              <span className="font-medium">{restaurant.settings?.pointValueAED || 0.05} AED</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Blanket Mode:</span>
-                              <span className="font-medium">{restaurant.settings?.blanketMode?.enabled ? 'Enabled' : 'Disabled'}</span>
-                            </div>
-                            {restaurant.settings?.blanketMode?.enabled && (
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">Mode Type:</span>
-                                <span className="font-medium">{restaurant.settings.blanketMode.type}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Usage Analytics */}
-                        <div>
-                          <h4 className="font-medium text-gray-900 mb-3">Usage Analytics</h4>
-                          <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Last Activity:</span>
-                              <span className="font-medium">{formatDate(restaurant.last_activity || restaurant.updated_at)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Login Frequency:</span>
-                              <span className="font-medium">{restaurant.login_frequency || 0} times/month</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-600">Most Visited:</span>
-                              <div className="flex gap-1 mt-1">
-                                {(restaurant.most_visited_tabs || []).map((tab, index) => (
-                                  <span key={index} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-                                    {tab}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Quick Actions */}
-                      <div className="flex gap-2 mt-4">
+                        
                         <button
-                          onClick={() => handleResetRestaurantData(restaurant.id)}
-                          className="px-3 py-2 bg-yellow-100 text-yellow-800 rounded-lg hover:bg-yellow-200 transition-colors text-sm"
+                          onClick={() => setExpandedRestaurant(
+                            expandedRestaurant === restaurant.id ? null : restaurant.id
+                          )}
+                          className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                         >
-                          Reset Data
-                        </button>
-                        <button className="px-3 py-2 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 transition-colors text-sm">
-                          View Dashboard
+                          {expandedRestaurant === restaurant.id ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
-                  )}
+
+                    {/* Restaurant Stats */}
+                    <div className="grid grid-cols-4 gap-4 mt-4">
+                      <div className="text-center p-3 bg-gray-50 rounded-lg">
+                        <p className="text-sm text-gray-600">Customers</p>
+                        <p className="text-lg font-bold text-gray-900">{restaurant.customer_count}</p>
+                      </div>
+                      <div className="text-center p-3 bg-gray-50 rounded-lg">
+                        <p className="text-sm text-gray-600">Revenue</p>
+                        <p className="text-lg font-bold text-gray-900">{restaurant.total_revenue?.toFixed(0)} AED</p>
+                      </div>
+                      <div className="text-center p-3 bg-gray-50 rounded-lg">
+                        <p className="text-sm text-gray-600">Points</p>
+                        <p className="text-lg font-bold text-gray-900">{restaurant.points_issued?.toLocaleString()}</p>
+                      </div>
+                      <div className="text-center p-3 bg-gray-50 rounded-lg">
+                        <p className="text-sm text-gray-600">Redemptions</p>
+                        <p className="text-lg font-bold text-gray-900">{restaurant.redemptions}</p>
+                      </div>
+                    </div>
+
+                    {/* Expanded Details */}
+                    {expandedRestaurant === restaurant.id && (
+                      <div className="mt-6 pt-6 border-t border-gray-200">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* Loyalty Settings */}
+                          <div className="bg-blue-50 rounded-lg p-4">
+                            <h4 className="font-medium text-blue-900 mb-3">Loyalty Settings</h4>
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-blue-700">Point Value:</span>
+                                <span className="font-medium text-blue-900">
+                                  {restaurant.settings?.pointValueAED || 0.05} AED
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-blue-700">Blanket Mode:</span>
+                                <span className="font-medium text-blue-900">
+                                  {restaurant.settings?.blanketMode?.enabled ? 'Enabled' : 'Disabled'}
+                                </span>
+                              </div>
+                              {restaurant.settings?.blanketMode?.enabled && (
+                                <div className="flex justify-between">
+                                  <span className="text-blue-700">Mode Type:</span>
+                                  <span className="font-medium text-blue-900">
+                                    {restaurant.settings.blanketMode.type}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="space-y-3">
+                            <button
+                              onClick={() => handleResetRestaurantData(restaurant.id)}
+                              className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-yellow-100 text-yellow-800 rounded-lg hover:bg-yellow-200 transition-colors"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                              Reset Restaurant Data
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -949,28 +1028,32 @@ const SuperAdminUI: React.FC = () => {
               <h2 className="text-xl font-bold text-gray-900">Customer Management</h2>
               <div className="flex items-center gap-3">
                 <select
-                  value={filterRestaurant}
-                  onChange={(e) => setFilterRestaurant(e.target.value)}
-                  className="px-3 py-2 border border-gray-200 rounded-lg"
+                  value={selectedRestaurant}
+                  onChange={(e) => setSelectedRestaurant(e.target.value)}
+                  className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                 >
                   <option value="all">All Restaurants</option>
-                  {restaurants.map(restaurant => (
-                    <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>
+                  {restaurants.map((restaurant) => (
+                    <option key={restaurant.id} value={restaurant.id}>
+                      {restaurant.name}
+                    </option>
                   ))}
                 </select>
               </div>
             </div>
 
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search customers..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-              />
+            <div className="bg-white rounded-xl p-4 border border-gray-200">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search customers..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
             {/* Customers List */}
@@ -979,18 +1062,18 @@ const SuperAdminUI: React.FC = () => {
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="text-left p-4 font-medium text-gray-900">Customer</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Restaurant</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Points</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Tier</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Spent</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Actions</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Customer</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Restaurant</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Points</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Tier</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Spent</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-200">
                     {filteredCustomers.map((customer) => (
                       <tr key={customer.id} className="hover:bg-gray-50">
-                        <td className="p-4">
+                        <td className="py-3 px-4">
                           <div>
                             <p className="font-medium text-gray-900">
                               {customer.first_name} {customer.last_name}
@@ -998,39 +1081,30 @@ const SuperAdminUI: React.FC = () => {
                             <p className="text-sm text-gray-600">{customer.email}</p>
                           </div>
                         </td>
-                        <td className="p-4">
-                          <span className="text-sm text-gray-900">{customer.restaurant_name}</span>
+                        <td className="py-3 px-4">
+                          <p className="text-gray-900">{customer.restaurant?.name}</p>
                         </td>
-                        <td className="p-4">
-                          <span className="font-medium text-gray-900">{customer.total_points}</span>
+                        <td className="py-3 px-4">
+                          <p className="font-medium text-gray-900">{customer.total_points}</p>
                         </td>
-                        <td className="p-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            customer.current_tier === 'gold' ? 'bg-yellow-100 text-yellow-800' :
-                            customer.current_tier === 'silver' ? 'bg-gray-100 text-gray-800' :
-                            'bg-orange-100 text-orange-800'
-                          }`}>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
                             {customer.current_tier}
                           </span>
                         </td>
-                        <td className="p-4">
-                          <span className="text-sm text-gray-900">{customer.total_spent.toFixed(0)} AED</span>
+                        <td className="py-3 px-4">
+                          <p className="text-gray-900">{customer.total_spent.toFixed(0)} AED</p>
                         </td>
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => {
-                                const points = prompt('Enter points to add (negative to subtract):');
-                                const reason = prompt('Enter reason for adjustment:');
-                                if (points && reason) {
-                                  handleAdjustCustomerPoints(customer.id, parseInt(points), reason);
-                                }
-                              }}
-                              className="p-1 text-blue-600 hover:bg-blue-100 rounded"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                          </div>
+                        <td className="py-3 px-4">
+                          <button
+                            onClick={() => {
+                              setSelectedCustomer(customer);
+                              setShowCustomerModal(true);
+                            }}
+                            className="text-red-600 hover:text-red-800 font-medium text-sm"
+                          >
+                            Adjust Points
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1047,27 +1121,31 @@ const SuperAdminUI: React.FC = () => {
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-gray-900">Transaction Monitoring</h2>
               <select
-                value={filterRestaurant}
-                onChange={(e) => setFilterRestaurant(e.target.value)}
-                className="px-3 py-2 border border-gray-200 rounded-lg"
+                value={selectedRestaurant}
+                onChange={(e) => setSelectedRestaurant(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
               >
                 <option value="all">All Restaurants</option>
-                {restaurants.map(restaurant => (
-                  <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>
+                {restaurants.map((restaurant) => (
+                  <option key={restaurant.id} value={restaurant.id}>
+                    {restaurant.name}
+                  </option>
                 ))}
               </select>
             </div>
 
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search transactions..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-              />
+            <div className="bg-white rounded-xl p-4 border border-gray-200">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search transactions..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
             {/* Transactions List */}
@@ -1076,25 +1154,27 @@ const SuperAdminUI: React.FC = () => {
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="text-left p-4 font-medium text-gray-900">Customer</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Restaurant</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Type</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Points</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Amount</th>
-                      <th className="text-left p-4 font-medium text-gray-900">Date</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Customer</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Restaurant</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Type</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Points</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Amount</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-900">Date</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-200">
                     {filteredTransactions.map((transaction) => (
                       <tr key={transaction.id} className="hover:bg-gray-50">
-                        <td className="p-4">
-                          <span className="text-sm text-gray-900">{transaction.customer_name}</span>
+                        <td className="py-3 px-4">
+                          <p className="font-medium text-gray-900">
+                            {transaction.customer?.first_name} {transaction.customer?.last_name}
+                          </p>
                         </td>
-                        <td className="p-4">
-                          <span className="text-sm text-gray-900">{transaction.restaurant_name}</span>
+                        <td className="py-3 px-4">
+                          <p className="text-gray-900">{transaction.restaurant?.name}</p>
                         </td>
-                        <td className="p-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-1 text-xs rounded-full ${
                             transaction.type === 'purchase' ? 'bg-green-100 text-green-800' :
                             transaction.type === 'redemption' ? 'bg-red-100 text-red-800' :
                             'bg-blue-100 text-blue-800'
@@ -1102,18 +1182,20 @@ const SuperAdminUI: React.FC = () => {
                             {transaction.type}
                           </span>
                         </td>
-                        <td className="p-4">
-                          <span className={`font-medium ${transaction.points > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <td className="py-3 px-4">
+                          <p className={`font-medium ${transaction.points > 0 ? 'text-green-600' : 'text-red-600'}`}>
                             {transaction.points > 0 ? '+' : ''}{transaction.points}
-                          </span>
+                          </p>
                         </td>
-                        <td className="p-4">
-                          <span className="text-sm text-gray-900">
-                            {transaction.amount_spent ? `${transaction.amount_spent.toFixed(2)} AED` : '-'}
-                          </span>
+                        <td className="py-3 px-4">
+                          <p className="text-gray-900">
+                            {transaction.amount_spent ? `${transaction.amount_spent} AED` : '-'}
+                          </p>
                         </td>
-                        <td className="p-4">
-                          <span className="text-sm text-gray-600">{formatDate(transaction.created_at)}</span>
+                        <td className="py-3 px-4">
+                          <p className="text-gray-600">
+                            {new Date(transaction.created_at).toLocaleDateString()}
+                          </p>
                         </td>
                       </tr>
                     ))}
@@ -1126,36 +1208,44 @@ const SuperAdminUI: React.FC = () => {
 
         {/* Support Tab */}
         {activeTab === 'support' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-200px)]">
-            {/* Tickets List */}
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-300px)]">
+            {/* Tickets Sidebar */}
+            <div className="bg-white border border-gray-200 rounded-xl flex flex-col">
               <div className="p-4 border-b border-gray-200">
                 <h3 className="font-semibold text-gray-900">Support Tickets</h3>
               </div>
-              <div className="overflow-y-auto h-full">
+              <div className="flex-1 overflow-y-auto">
                 {supportTickets.map((ticket) => (
                   <button
                     key={ticket.id}
                     onClick={() => setSelectedTicket(ticket)}
-                    className={`w-full p-4 text-left hover:bg-gray-50 border-b border-gray-100 ${
-                      selectedTicket?.id === ticket.id ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''
+                    className={`w-full p-4 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 ${
+                      selectedTicket?.id === ticket.id ? 'bg-red-50 border-r-2 border-red-500' : ''
                     }`}
                   >
                     <div className="flex items-start justify-between mb-2">
-                      <h4 className="font-medium text-gray-900 text-sm">{ticket.title}</h4>
-                      <div className="flex gap-1">
-                        <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(ticket.status)}`}>
-                          {ticket.status.replace('_', ' ')}
-                        </span>
-                        <span className={`text-xs px-2 py-1 rounded-full ${getPriorityColor(ticket.priority)}`}>
-                          {ticket.priority}
-                        </span>
-                      </div>
+                      <h4 className="font-medium text-gray-900 text-sm line-clamp-1">
+                        {ticket.title}
+                      </h4>
+                      <span className={`text-xs px-2 py-1 rounded-full ${
+                        ticket.status === 'open' ? 'bg-red-100 text-red-800' :
+                        ticket.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
+                        ticket.status === 'resolved' ? 'bg-green-100 text-green-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {ticket.status.replace('_', ' ')}
+                      </span>
                     </div>
-                    <p className="text-xs text-gray-600 mb-2">{ticket.description}</p>
+                    <p className="text-xs text-gray-600 line-clamp-2 mb-2">
+                      {ticket.description}
+                    </p>
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-gray-500">{ticket.restaurant?.name}</span>
-                      <span className="text-xs text-gray-500">{formatDate(ticket.created_at)}</span>
+                      <span className="text-xs text-gray-500">
+                        {ticket.restaurant?.name}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {new Date(ticket.created_at).toLocaleDateString()}
+                      </span>
                     </div>
                   </button>
                 ))}
@@ -1163,7 +1253,7 @@ const SuperAdminUI: React.FC = () => {
             </div>
 
             {/* Chat Area */}
-            <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 flex flex-col">
+            <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl flex flex-col">
               {selectedTicket ? (
                 <>
                   {/* Chat Header */}
@@ -1177,7 +1267,7 @@ const SuperAdminUI: React.FC = () => {
                         <select
                           value={selectedTicket.status}
                           onChange={(e) => handleUpdateTicketStatus(selectedTicket.id, e.target.value)}
-                          className="px-3 py-1 border border-gray-200 rounded text-sm"
+                          className="px-3 py-1 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                         >
                           <option value="open">Open</option>
                           <option value="in_progress">In Progress</option>
@@ -1190,21 +1280,31 @@ const SuperAdminUI: React.FC = () => {
 
                   {/* Messages */}
                   <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {messages.map((message) => (
+                    {/* Initial ticket message */}
+                    <div className="flex justify-start">
+                      <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-lg bg-gray-200 text-gray-900">
+                        <p className="text-sm">{selectedTicket.description}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {new Date(selectedTicket.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+
+                    {supportMessages.map((message) => (
                       <div
                         key={message.id}
                         className={`flex ${message.sender_type === 'super_admin' ? 'justify-end' : 'justify-start'}`}
                       >
                         <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
                           message.sender_type === 'super_admin'
-                            ? 'bg-[#1E2A78] text-white'
+                            ? 'bg-red-600 text-white'
                             : 'bg-gray-200 text-gray-900'
                         }`}>
                           <p className="text-sm">{message.message}</p>
                           <p className={`text-xs mt-1 ${
-                            message.sender_type === 'super_admin' ? 'text-blue-200' : 'text-gray-500'
+                            message.sender_type === 'super_admin' ? 'text-red-200' : 'text-gray-500'
                           }`}>
-                            {formatDate(message.created_at)}
+                            {new Date(message.created_at).toLocaleString()}
                           </p>
                         </div>
                       </div>
@@ -1218,14 +1318,14 @@ const SuperAdminUI: React.FC = () => {
                         type="text"
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && !sendingMessage && handleSendMessage()}
+                        onKeyPress={(e) => e.key === 'Enter' && !sendingMessage && handleSendSupportMessage()}
                         placeholder="Type your response..."
-                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
+                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                       />
                       <button
-                        onClick={handleSendMessage}
+                        onClick={handleSendSupportMessage}
                         disabled={sendingMessage || !newMessage.trim()}
-                        className="px-4 py-2 bg-[#1E2A78] text-white rounded-lg hover:bg-[#3B4B9A] transition-colors disabled:opacity-50"
+                        className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {sendingMessage ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Send'}
                       </button>
@@ -1250,78 +1350,51 @@ const SuperAdminUI: React.FC = () => {
           <div className="space-y-6">
             <h2 className="text-xl font-bold text-gray-900">System Management</h2>
             
-            {/* System Health */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white rounded-xl p-4 border border-gray-200">
-                <div className="flex items-center gap-3">
-                  <Database className="w-8 h-8 text-green-600" />
-                  <div>
-                    <p className="font-medium text-gray-900">Database</p>
-                    <p className="text-sm text-green-600">Connected</p>
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Data Management */}
+              <div className="bg-white rounded-xl p-6 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Data Management</h3>
+                <div className="space-y-3">
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-blue-100 text-blue-800 rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    Refresh All Data
+                  </button>
+                  
+                  <button
+                    onClick={handleSystemWideReset}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-red-100 text-red-800 rounded-lg hover:bg-red-200 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Reset All Customer Data
+                  </button>
                 </div>
               </div>
-              
-              <div className="bg-white rounded-xl p-4 border border-gray-200">
-                <div className="flex items-center gap-3">
-                  <Shield className="w-8 h-8 text-green-600" />
-                  <div>
-                    <p className="font-medium text-gray-900">Auth Service</p>
-                    <p className="text-sm text-green-600">Operational</p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="bg-white rounded-xl p-4 border border-gray-200">
-                <div className="flex items-center gap-3">
-                  <Calculator className="w-8 h-8 text-green-600" />
-                  <div>
-                    <p className="font-medium text-gray-900">Point Engine</p>
-                    <p className="text-sm text-green-600">Running</p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="bg-white rounded-xl p-4 border border-gray-200">
-                <div className="flex items-center gap-3">
-                  <MessageSquare className="w-8 h-8 text-green-600" />
-                  <div>
-                    <p className="font-medium text-gray-900">Support System</p>
-                    <p className="text-sm text-green-600">Active</p>
-                  </div>
-                </div>
-              </div>
-            </div>
 
-            {/* System Actions */}
-            <div className="bg-white rounded-xl p-6 border border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-4">System Actions</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button
-                  onClick={fetchAllData}
-                  className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <RefreshCw className="w-5 h-5 text-blue-600" />
-                  <div className="text-left">
-                    <p className="font-medium text-gray-900">Refresh All Data</p>
-                    <p className="text-sm text-gray-600">Reload system statistics</p>
+              {/* System Info */}
+              <div className="bg-white rounded-xl p-6 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">System Information</h3>
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Version:</span>
+                    <span className="font-medium text-gray-900">2.0.0</span>
                   </div>
-                </button>
-                
-                <button
-                  onClick={() => {
-                    if (confirm('This will reset ALL customer data across ALL restaurants. This cannot be undone!')) {
-                      // Implement system-wide reset
-                    }
-                  }}
-                  className="flex items-center gap-3 p-4 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
-                >
-                  <Trash2 className="w-5 h-5 text-red-600" />
-                  <div className="text-left">
-                    <p className="font-medium text-red-900">Reset All Data</p>
-                    <p className="text-sm text-red-600">Clear all customer data system-wide</p>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Environment:</span>
+                    <span className="font-medium text-gray-900">Production</span>
                   </div>
-                </button>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Database:</span>
+                    <span className="font-medium text-green-600">Connected</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Last Backup:</span>
+                    <span className="font-medium text-gray-900">2 hours ago</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1333,69 +1406,79 @@ const SuperAdminUI: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-gray-900">Create New Restaurant</h3>
+              <h3 className="text-lg font-bold text-gray-900">Create Restaurant Account</h3>
               <button
                 onClick={() => setShowCreateRestaurant(false)}
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
               >
-                <X className="h-5 w-5" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Restaurant Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Restaurant Name
+                </label>
                 <input
                   type="text"
-                  value={newRestaurantData.name}
-                  onChange={(e) => setNewRestaurantData({ ...newRestaurantData, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-                  placeholder="Restaurant Name"
+                  value={restaurantForm.name}
+                  onChange={(e) => setRestaurantForm({ ...restaurantForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  placeholder="Enter restaurant name"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Owner First Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Owner First Name
+                  </label>
                   <input
                     type="text"
-                    value={newRestaurantData.ownerFirstName}
-                    onChange={(e) => setNewRestaurantData({ ...newRestaurantData, ownerFirstName: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-                    placeholder="First Name"
+                    value={restaurantForm.ownerFirstName}
+                    onChange={(e) => setRestaurantForm({ ...restaurantForm, ownerFirstName: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    placeholder="First name"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Owner Last Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Owner Last Name
+                  </label>
                   <input
                     type="text"
-                    value={newRestaurantData.ownerLastName}
-                    onChange={(e) => setNewRestaurantData({ ...newRestaurantData, ownerLastName: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-                    placeholder="Last Name"
+                    value={restaurantForm.ownerLastName}
+                    onChange={(e) => setRestaurantForm({ ...restaurantForm, ownerLastName: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    placeholder="Last name"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Owner Email</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Owner Email
+                </label>
                 <input
                   type="email"
-                  value={newRestaurantData.ownerEmail}
-                  onChange={(e) => setNewRestaurantData({ ...newRestaurantData, ownerEmail: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
+                  value={restaurantForm.ownerEmail}
+                  onChange={(e) => setRestaurantForm({ ...restaurantForm, ownerEmail: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
                   placeholder="owner@restaurant.com"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Owner Password</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Owner Password
+                </label>
                 <input
                   type="password"
-                  value={newRestaurantData.ownerPassword}
-                  onChange={(e) => setNewRestaurantData({ ...newRestaurantData, ownerPassword: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent"
-                  placeholder="Password (min 6 characters)"
+                  value={restaurantForm.ownerPassword}
+                  onChange={(e) => setRestaurantForm({ ...restaurantForm, ownerPassword: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  placeholder="Enter password"
                 />
               </div>
             </div>
@@ -1410,9 +1493,143 @@ const SuperAdminUI: React.FC = () => {
               <button
                 onClick={handleCreateRestaurant}
                 disabled={loading}
-                className="flex-1 py-3 px-4 bg-[#1E2A78] text-white rounded-xl hover:bg-[#3B4B9A] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 py-3 px-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Restaurant'}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Create Restaurant'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Restaurant Modal */}
+      {showEditRestaurant && editingRestaurant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-gray-900">Edit Restaurant</h3>
+              <button
+                onClick={() => setShowEditRestaurant(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Restaurant Name
+                </label>
+                <input
+                  type="text"
+                  value={restaurantForm.name}
+                  onChange={(e) => setRestaurantForm({ ...restaurantForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  placeholder="Enter restaurant name"
+                />
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-sm text-gray-600">
+                  <strong>Owner:</strong> {editingRestaurant.owner_name} ({editingRestaurant.owner_email})
+                </p>
+                <p className="text-sm text-gray-600">
+                  <strong>ID:</strong> {editingRestaurant.id}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowEditRestaurant(false)}
+                className="flex-1 py-3 px-4 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdateRestaurant}
+                disabled={loading}
+                className="flex-1 py-3 px-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Update Restaurant'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Points Adjustment Modal */}
+      {showCustomerModal && selectedCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-gray-900">Adjust Customer Points</h3>
+              <button
+                onClick={() => setShowCustomerModal(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="font-medium text-gray-900">
+                  {selectedCustomer.first_name} {selectedCustomer.last_name}
+                </p>
+                <p className="text-sm text-gray-600">{selectedCustomer.email}</p>
+                <p className="text-sm text-gray-600">
+                  Current Points: {selectedCustomer.total_points}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Points Adjustment
+                </label>
+                <input
+                  type="number"
+                  value={customerPointsAdjustment.points}
+                  onChange={(e) => setCustomerPointsAdjustment({ 
+                    ...customerPointsAdjustment, 
+                    points: parseInt(e.target.value) || 0 
+                  })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  placeholder="Enter points (positive to add, negative to subtract)"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Reason
+                </label>
+                <input
+                  type="text"
+                  value={customerPointsAdjustment.reason}
+                  onChange={(e) => setCustomerPointsAdjustment({ 
+                    ...customerPointsAdjustment, 
+                    reason: e.target.value 
+                  })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  placeholder="Reason for adjustment"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowCustomerModal(false)}
+                className="flex-1 py-3 px-4 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAdjustCustomerPoints}
+                disabled={loading || !customerPointsAdjustment.reason.trim()}
+                className="flex-1 py-3 px-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Adjust Points'}
               </button>
             </div>
           </div>
